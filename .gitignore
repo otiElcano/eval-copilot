@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Generated reports
+eval_report_*.html
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# MCP config (may contain tokens)
+mcp-config.json
+
+# VS Code extension tracker data
+Code/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

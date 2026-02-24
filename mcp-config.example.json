@@ -1,0 +1,40 @@
+{
+  "servers": {
+    "filesystem": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "tools": ["read_file", "write_file", "list_directory", "create_directory", "move_file", "search_files", "get_file_info"],
+      "timeout": 30000
+    },
+    "github": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_GITHUB_TOKEN>"
+      },
+      "tools": "*",
+      "timeout": 30000
+    },
+    "brave-search": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "<YOUR_BRAVE_API_KEY>"
+      },
+      "tools": ["brave_web_search", "brave_local_search"],
+      "timeout": 20000
+    },
+    "remote-example": {
+      "type": "http",
+      "url": "http://localhost:3100/mcp",
+      "headers": {
+        "Authorization": "Bearer <YOUR_TOKEN>"
+      },
+      "tools": "*",
+      "timeout": 15000
+    }
+  }
+}
