@@ -36,4 +36,8 @@ export interface EvalOptions {
   model: string;
   mcp?: string;
   disableNativeTools: boolean;
+  /** Individual native tool names to block (additive with disableNativeTools). */
+  disabledTools: string[];
+  /** Stream each iteration's output to the terminal in real-time. */
+  stream: boolean;
 }

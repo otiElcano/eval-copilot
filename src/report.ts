@@ -172,6 +172,7 @@ function buildCSS(columnCount: number): string {
     }
     .badge-success { background: #1a3a1a; color: #3fb950; border: 1px solid #2ea043; }
     .badge-error   { background: #3a1a1a; color: #f85149; border: 1px solid #6e2b2b; }
+    .badge-latency { background: #1a1f3a; color: #79c0ff; border: 1px solid #1f6feb; font-variant-numeric: tabular-nums; }
 
     .card-body {
       padding: 16px;
@@ -231,13 +232,55 @@ function buildCSS(columnCount: number): string {
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
       font-size: 0.78rem;
       color: #d2a8ff;
-      padding: 3px 0;
+      padding: 4px 0;
       border-bottom: 1px dashed #21262d;
     }
     .tool-item:last-child { border-bottom: none; }
+    .tool-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .tool-name { color: #d2a8ff; }
     .tool-duration {
-      float: right;
       color: #8b949e;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .tool-detail {
+      margin-top: 3px;
+    }
+    .tool-detail > summary {
+      cursor: pointer;
+      font-size: 0.72rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      user-select: none;
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .tool-detail > summary::before {
+      content: "▶";
+      font-size: 0.6rem;
+      transition: transform 0.15s;
+    }
+    .tool-detail[open] > summary::before { transform: rotate(90deg); }
+    .tool-json {
+      margin-top: 4px;
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 0.76rem;
+      color: #e6edf3;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-x: auto;
+      max-height: 200px;
+      overflow-y: auto;
     }
 
     .usage-bar {
@@ -246,6 +289,39 @@ function buildCSS(columnCount: number): string {
       color: #8b949e;
     }
     .usage-bar span { color: #79c0ff; }
+
+    /* ── Latency bar ── */
+    .latency-bar-wrap {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid #21262d;
+    }
+    .latency-bar-label {
+      font-size: 0.72rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 5px;
+    }
+    .latency-bar-track {
+      height: 6px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .latency-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #1f6feb, #58a6ff);
+      transition: width 0.3s ease;
+    }
+    .latency-bar-fill.slowest { background: linear-gradient(90deg, #b45309, #f0883e); }
+    .latency-bar-value {
+      font-size: 0.78rem;
+      color: #79c0ff;
+      margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+    }
   `.trim();
 }
 
@@ -269,6 +345,10 @@ function buildHTML(
 
   const css = buildCSS(total);
 
+  const allDurations = results.map((r) => r.durationMs);
+  const minLatency = allDurations.length > 0 ? Math.min(...allDurations) : 0;
+  const maxLatency = allDurations.length > 0 ? Math.max(...allDurations) : 0;
+
   const summaryBar = `
   <div class="summary">
     <div class="summary-stat">
@@ -286,6 +366,14 @@ function buildHTML(
     <div class="summary-stat latency">
       <span class="value">${avgLatency.toLocaleString()}ms</span>
       <span class="label">Avg Latency</span>
+    </div>
+    <div class="summary-stat latency">
+      <span class="value">${minLatency.toLocaleString()}ms</span>
+      <span class="label">Min Latency</span>
+    </div>
+    <div class="summary-stat latency">
+      <span class="value">${maxLatency.toLocaleString()}ms</span>
+      <span class="label">Max Latency</span>
     </div>
   </div>`;
 
@@ -307,10 +395,30 @@ function buildHTML(
           <div class="card-footer">
             <div class="tools-title">Tools invoked (${result.toolsInvoked.length})</div>
             ${result.toolsInvoked
-              .map(
-                (t) =>
-                  `<div class="tool-item">${escapeHtml(t.toolName)}<span class="tool-duration">${t.durationMs}ms</span></div>`
-              )
+              .map((t) => {
+                const argsJson = t.args !== undefined
+                  ? escapeHtml(JSON.stringify(t.args, null, 2))
+                  : "(none)";
+                const resultJson = t.result === undefined
+                  ? "(pending)"
+                  : typeof t.result === "string"
+                    ? escapeHtml(t.result)
+                    : escapeHtml(JSON.stringify(t.result, null, 2));
+                return `<div class="tool-item">
+              <div class="tool-item-header">
+                <span class="tool-name">${escapeHtml(t.toolName)}</span>
+                <span class="tool-duration">${t.durationMs.toLocaleString()} ms</span>
+              </div>
+              <details class="tool-detail">
+                <summary>Input</summary>
+                <pre class="tool-json">${argsJson}</pre>
+              </details>
+              <details class="tool-detail">
+                <summary>Output</summary>
+                <pre class="tool-json">${resultJson}</pre>
+              </details>
+            </div>`;
+              })
               .join("\n            ")}
           </div>`
           : "";
@@ -320,16 +428,29 @@ function buildHTML(
           ? `<div class="usage-bar">Tokens: <span>${(result.usageInfo.inputTokens ?? 0).toLocaleString()} in</span> / <span>${(result.usageInfo.outputTokens ?? 0).toLocaleString()} out</span></div>`
           : "";
 
+      // Latency bar: percentage relative to the slowest iteration
+      const pct = maxLatency > 0 ? Math.round((result.durationMs / maxLatency) * 100) : 100;
+      const isSlowest = result.durationMs === maxLatency && total > 1;
+      const latencyBar = `
+        <div class="latency-bar-wrap">
+          <div class="latency-bar-label">Execution time</div>
+          <div class="latency-bar-track">
+            <div class="latency-bar-fill${isSlowest ? " slowest" : ""}" style="width:${pct}%"></div>
+          </div>
+          <div class="latency-bar-value">⏱ ${result.durationMs.toLocaleString()} ms${isSlowest ? "  (slowest)" : ""}</div>
+        </div>`;
+
       return `
     <div class="${cardClass}">
       <div class="card-header">
         <span class="card-title">Iteration ${result.iterationNumber}</span>
-        <span class="card-meta">${result.durationMs.toLocaleString()}ms</span>
+        <span class="badge badge-latency">⏱ ${result.durationMs.toLocaleString()} ms</span>
         ${badge}
       </div>
       <div class="card-body">
         ${bodyContent}
         ${usageBar}
+        ${latencyBar}
       </div>
       ${toolsFooter}
     </div>`;

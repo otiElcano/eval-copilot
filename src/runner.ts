@@ -1,4 +1,4 @@
-import { CopilotClient } from "@github/copilot-sdk";
+import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { SessionConfig } from "@github/copilot-sdk";
 import ora from "ora";
 import type { EvalOptions, IterationResult, ToolInvocationRecord, UsageInfo } from "./types.js";
@@ -67,17 +67,30 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     }
   }
 
-  // ── 5. Build hooks (disable-native-tools) ─────────────────────────────────
+  // ── 5. Build hooks (disable-native-tools / disable-tool) ─────────────────
+  const explicitlyDisabled = new Set(options.disabledTools);
   const hooks: SessionConfig["hooks"] = {};
-  if (options.disableNativeTools) {
+
+  if (options.disableNativeTools || explicitlyDisabled.size > 0) {
     hooks.onPreToolUse = async (input) => {
       const { toolName } = input;
-      // Allow if wildcard MCP (all tools are MCP tools)
-      if (mcpHasWildcard) return undefined;
-      // Allow if the tool is explicitly listed as an MCP tool
-      if (mcpToolNames.has(toolName)) return undefined;
-      // Deny all others (native Copilot tools)
-      return { permissionDecision: "deny" as const };
+
+      // Always deny tools in the explicit block-list
+      if (explicitlyDisabled.has(toolName)) {
+        return { permissionDecision: "deny" as const };
+      }
+
+      // When --disable-native-tools is set, deny everything that isn't an MCP tool
+      if (options.disableNativeTools) {
+        // Allow if wildcard MCP (all tools are MCP tools)
+        if (mcpHasWildcard) return undefined;
+        // Allow if the tool is explicitly listed as an MCP tool
+        if (mcpToolNames.has(toolName)) return undefined;
+        // Deny all other (native Copilot) tools
+        return { permissionDecision: "deny" as const };
+      }
+
+      return undefined;
     };
   }
 
@@ -85,7 +98,11 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
   const results: IterationResult[] = [];
 
   for (let i = 1; i <= options.iterations; i++) {
-    const spinner = ora(`[${i}/${options.iterations}] Running iteration…`).start();
+    const iterLabel = `[${i}/${options.iterations}]`;
+    const spinner = options.stream ? null : ora(`${iterLabel} Running iteration…`).start();
+    if (options.stream) {
+      process.stdout.write(`\n${'─'.repeat(60)}\n${iterLabel} Iteration ${i}  (streaming)\n${'─'.repeat(60)}\n`);
+    }
     const iterStart = Date.now();
 
     let session: Awaited<ReturnType<typeof client.createSession>> | undefined;
@@ -99,36 +116,75 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
       session = await client.createSession({
         model: resolvedModel,
         systemMessage: {
-          content: `[eval-copilot: iteration ${i}/${options.iterations} · seed:${iterSeed}]`,
+          // Append mode: SDK foundation + our instructions
+          mode: "append",
+          content: [
+            `[eval-copilot: iteration ${i}/${options.iterations} · seed:${iterSeed}]`,
+            `You are running in a LOCAL environment with FULL capabilities:`,
+            `- Shell/terminal execution: execute commands directly, do NOT tell the user to run them.`,
+            `- Network access: you CAN reach external hosts, run scanners, make HTTP requests, etc.`,
+            `- File system: read and write files freely.`,
+            `- MCP tools: all configured MCP servers are active — use their tools proactively.`,
+            `When a task requires running a command (sqlmap, nmap, curl, etc.), invoke the tool yourself instead of instructing the user.`,
+          ].join("\n"),
         },
         ...(mcpServers ? { mcpServers } : {}),
+        onPermissionRequest: approveAll,
+        workingDirectory: process.cwd(),
         hooks: Object.keys(hooks).length > 0 ? hooks : undefined,
       });
 
       // Track tool invocations
       const toolsInvoked: ToolInvocationRecord[] = [];
-      const toolStartTimes = new Map<string, number>();
+      // Map toolCallId -> index in toolsInvoked for reliable start↔complete pairing
+      const toolCallIdToIndex = new Map<string, number>();
+      const toolStartTimes = new Map<string, number>(); // keyed by toolCallId
 
       // Use a loose-typed helper to avoid overload resolution issues with SDK event strings
       type LooseSession = { on(eventType: string, handler: (event: unknown) => void): () => void };
       const anySession = session as unknown as LooseSession;
 
+      // ── Stream assistant tokens to stdout ────────────────────────────────
+      let unsubDelta: (() => void) | undefined;
+      if (options.stream) {
+        unsubDelta = anySession.on("assistant.message_delta", (event: unknown) => {
+          const e = event as { data?: { deltaContent?: string; parentToolCallId?: string } };
+          // Only stream top-level response (not tool sub-calls)
+          if (!e?.data?.parentToolCallId && e?.data?.deltaContent) {
+            process.stdout.write(e.data.deltaContent);
+          }
+        });
+      }
+
       const unsubStart = anySession.on("tool.execution_start", (event: unknown) => {
-        const e = event as { data: { toolName: string; arguments: unknown } };
-        toolStartTimes.set(e.data.toolName, Date.now());
-        toolsInvoked.push({ toolName: e.data.toolName, args: e.data.arguments, durationMs: 0 });
+        const e = event as { data?: { toolCallId?: string; toolName?: string; arguments?: unknown } };
+        const toolCallId = e?.data?.toolCallId ?? "";
+        const toolName = e?.data?.toolName ?? "unknown";
+        const args = e?.data?.arguments;
+        const idx = toolsInvoked.length;
+        toolsInvoked.push({ toolName, args, durationMs: 0 });
+        toolCallIdToIndex.set(toolCallId, idx);
+        toolStartTimes.set(toolCallId, Date.now());
+        if (options.stream) {
+          process.stdout.write(`\n  ⚙  ${toolName}…\n`);
+        }
       });
 
       const unsubComplete = anySession.on("tool.execution_complete", (event: unknown) => {
-        const e = event as { data: { toolName: string; success: boolean; result: unknown } };
-        const startTime = toolStartTimes.get(e.data.toolName);
-        // Find the matching pending record (no result yet)
-        const pending = [...toolsInvoked].reverse().find(
-          (t) => t.toolName === e.data.toolName && t.result === undefined
-        );
-        if (pending) {
-          pending.result = e.data.result;
-          pending.durationMs = startTime !== undefined ? Date.now() - startTime : 0;
+        const e = event as { data?: { toolCallId?: string; success?: boolean; result?: { content?: string; detailedContent?: string } } };
+        const toolCallId = e?.data?.toolCallId ?? "";
+        const idx = toolCallIdToIndex.get(toolCallId);
+        if (idx !== undefined) {
+          const t = toolsInvoked[idx];
+          // Prefer detailedContent (raw output) over condensed content
+          t.result = e?.data?.result?.detailedContent ?? e?.data?.result?.content ?? e?.data?.result;
+          const startTime = toolStartTimes.get(toolCallId);
+          t.durationMs = startTime !== undefined ? Date.now() - startTime : 0;
+          toolCallIdToIndex.delete(toolCallId);
+          toolStartTimes.delete(toolCallId);
+          if (options.stream) {
+            process.stdout.write(`  ✓  ${t.toolName} (${t.durationMs.toLocaleString()} ms)\n\n`);
+          }
         }
       });
 
@@ -143,17 +199,22 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
         };
       });
 
-      // Send prompt and wait for the final response
-      const responseEvent = await session.sendAndWait({ prompt: options.prompt });
+      // Send prompt and wait for the final response (no timeout cap)
+      const responseEvent = await session.sendAndWait({ prompt: options.prompt }, 60000 * 60);
       const responseText = (responseEvent as { data?: { content?: string } } | undefined)?.data?.content;
 
       // Clean up subscriptions
       unsubStart();
       unsubComplete();
       unsubUsage();
+      unsubDelta?.();
 
       const durationMs = Date.now() - iterStart;
-      spinner.succeed(`[${i}/${options.iterations}] Completed in ${durationMs}ms`);
+      if (options.stream) {
+        process.stdout.write(`\n${iterLabel} Completed in ${durationMs.toLocaleString()} ms\n`);
+      } else {
+        spinner!.succeed(`${iterLabel} Completed in ${durationMs}ms`);
+      }
 
       results.push({
         iterationNumber: i,
@@ -165,7 +226,11 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     } catch (err) {
       const durationMs = Date.now() - iterStart;
       const message = (err as Error).message ?? String(err);
-      spinner.fail(`[${i}/${options.iterations}] Failed: ${message}`);
+      if (options.stream) {
+        process.stderr.write(`\n${iterLabel} Failed: ${message}\n`);
+      } else {
+        spinner!.fail(`${iterLabel} Failed: ${message}`);
+      }
 
       results.push({
         iterationNumber: i,

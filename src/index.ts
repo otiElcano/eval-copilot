@@ -22,7 +22,18 @@ program
   .option("--mcp <path>", "Path to an MCP server configuration JSON file")
   .option(
     "--disable-native-tools",
-    "Block native Copilot tools (workspace search, etc.) via onPreToolUse hook",
+    "Block ALL native Copilot tools (workspace search, etc.) via onPreToolUse hook",
+    false
+  )
+  .option(
+    "--disable-tool <name>",
+    "Block a specific native tool by name (repeatable, e.g. --disable-tool read_file --disable-tool web_search)",
+    (value: string, previous: string[]) => previous.concat([value]),
+    [] as string[]
+  )
+  .option(
+    "--stream",
+    "Print each iteration's output to the terminal in real-time as it is generated",
     false
   );
 
@@ -34,6 +45,8 @@ const rawOpts = program.opts<{
   model: string;
   mcp?: string;
   disableNativeTools: boolean;
+  disableTool: string[];
+  stream: boolean;
 }>();
 
 const options: EvalOptions = {
@@ -42,6 +55,8 @@ const options: EvalOptions = {
   model: rawOpts.model,
   mcp: rawOpts.mcp,
   disableNativeTools: rawOpts.disableNativeTools,
+  disabledTools: rawOpts.disableTool,
+  stream: rawOpts.stream,
 };
 
 // ── Validate iterations ───────────────────────────────────────────────────────
@@ -55,7 +70,10 @@ console.log(`   Prompt     : ${options.prompt.length > 80 ? options.prompt.slice
 console.log(`   Model      : ${options.model}`);
 console.log(`   Iterations : ${options.iterations}`);
 if (options.mcp) console.log(`   MCP config : ${options.mcp}`);
-if (options.disableNativeTools) console.log(`   Native tools: DISABLED`);
+
+if (options.disableNativeTools) console.log(`   Native tools: ALL DISABLED`);
+if (options.disabledTools.length > 0) console.log(`   Disabled tools: ${options.disabledTools.join(", ")}`);
+if (options.stream) console.log(`   Streaming  : enabled`);
 console.log();
 
 (async () => {
