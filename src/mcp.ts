@@ -77,7 +77,16 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
       }
     }
 
-    mcpServers[name] = server as MCPServerConfig;
+    // Normalize the tools field: SDK requires string[], not a bare "*" string.
+    // An absent tools field defaults to ["*"] (all tools).
+    const normalizedServer = { ...s } as Record<string, unknown>;
+    if (normalizedServer["tools"] === "*" || normalizedServer["tools"] === undefined) {
+      normalizedServer["tools"] = ["*"];
+    } else if (!Array.isArray(normalizedServer["tools"])) {
+      normalizedServer["tools"] = [];
+    }
+
+    mcpServers[name] = normalizedServer as unknown as MCPServerConfig;
   }
 
   return { mcpServers, toolNames, hasWildcard };
