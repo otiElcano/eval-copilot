@@ -67,26 +67,32 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     }
   }
 
-  // ── 5. Build hooks (disable-native-tools / disable-tool) ─────────────────
+  // ── 5. Build hooks (disable-builtin-mcps / disable-native-tools / disable-tool / allow-tool) ──
   const explicitlyDisabled = new Set(options.disabledTools);
+  const allowedToolNames = new Set(options.allowedTools);
   const hooks: SessionConfig["hooks"] = {};
 
-  if (options.disableNativeTools || explicitlyDisabled.size > 0) {
+  const disableAllNative = options.disableNativeTools || options.disableBuiltinMcps;
+
+  if (disableAllNative || explicitlyDisabled.size > 0) {
     hooks.onPreToolUse = async (input) => {
       const { toolName } = input;
+
+      // --allow-tool whitelist takes absolute priority over all deny rules
+      if (allowedToolNames.has(toolName)) return undefined;
 
       // Always deny tools in the explicit block-list
       if (explicitlyDisabled.has(toolName)) {
         return { permissionDecision: "deny" as const };
       }
 
-      // When --disable-native-tools is set, deny everything that isn't an MCP tool
-      if (options.disableNativeTools) {
+      // --disable-builtin-mcps / --disable-native-tools: deny everything that isn't a user-configured MCP tool
+      if (disableAllNative) {
         // Allow if wildcard MCP (all tools are MCP tools)
         if (mcpHasWildcard) return undefined;
         // Allow if the tool is explicitly listed as an MCP tool
         if (mcpToolNames.has(toolName)) return undefined;
-        // Deny all other (native Copilot) tools
+        // Deny all other (native / built-in) tools
         return { permissionDecision: "deny" as const };
       }
 
