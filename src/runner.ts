@@ -67,35 +67,60 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     }
   }
 
-  // ── 5. Build hooks (disable-builtin-mcps / disable-native-tools / disable-tool / allow-tool) ──
+  // ── 5. Compute native tool-availability config for SessionConfig ──────────
+  //
+  // The SDK exposes two first-class fields on SessionConfig:
+  //   availableTools  – whitelist: only these tools exist for the session.
+  //   excludedTools   – blacklist: all tools except these are available.
+  //                     (ignored when availableTools is set)
+  //
+  // We prefer these over onPreToolUse hooks because:
+  //   - Hooks run AFTER the tool call is already scheduled, so denied tools
+  //     still show up with a real duration but undefined result → "(pending)"
+  //     in the report.
+  //   - availableTools/excludedTools prevent the tool from being offered to
+  //     the LLM in the first place — cleaner and more reliable.
+
   const explicitlyDisabled = new Set(options.disabledTools);
-  const allowedToolNames = new Set(options.allowedTools);
+  const allowedToolNames   = new Set(options.allowedTools);
+  const disableAllNative   = options.disableNativeTools || options.disableBuiltinMcps;
+
+  // sessionAvailableTools: defined → whitelist mode (availableTools in SDK)
+  // sessionExcludedTools:  defined → blacklist mode (excludedTools in SDK)
+  let sessionAvailableTools: string[] | undefined;
+  let sessionExcludedTools:  string[] | undefined;
+
+  if (disableAllNative) {
+    if (mcpHasWildcard) {
+      // Wildcard MCP: we cannot enumerate all MCP tool names upfront, so we
+      // cannot build a whitelist. Fall through to hook-based filtering below.
+    } else {
+      // Build whitelist from: explicitly --allow-tool names + known MCP tools
+      const whitelist = new Set<string>([
+        ...allowedToolNames,
+        ...mcpToolNames,
+      ]);
+      sessionAvailableTools = [...whitelist];
+    }
+  } else if (explicitlyDisabled.size > 0) {
+    // No global disable — just block specific tools.
+    // If an allow-listed tool is also in the block-list, allow wins.
+    const blocked = [...explicitlyDisabled].filter((t) => !allowedToolNames.has(t));
+    if (blocked.length > 0) sessionExcludedTools = blocked;
+  }
+
+  // Fallback hook: only needed when wildcardMCP + disableAllNative (cannot
+  // build a static whitelist because MCP tool names aren't known ahead of time).
   const hooks: SessionConfig["hooks"] = {};
 
-  const disableAllNative = options.disableNativeTools || options.disableBuiltinMcps;
-
-  if (disableAllNative || explicitlyDisabled.size > 0) {
+  if (disableAllNative && mcpHasWildcard) {
     hooks.onPreToolUse = async (input) => {
       const { toolName } = input;
-
-      // --allow-tool whitelist takes absolute priority over all deny rules
+      // Explicitly allowed tools always win
       if (allowedToolNames.has(toolName)) return undefined;
-
-      // Always deny tools in the explicit block-list
-      if (explicitlyDisabled.has(toolName)) {
-        return { permissionDecision: "deny" as const };
-      }
-
-      // --disable-builtin-mcps / --disable-native-tools: deny everything that isn't a user-configured MCP tool
-      if (disableAllNative) {
-        // Allow if wildcard MCP (all tools are MCP tools)
-        if (mcpHasWildcard) return undefined;
-        // Allow if the tool is explicitly listed as an MCP tool
-        if (mcpToolNames.has(toolName)) return undefined;
-        // Deny all other (native / built-in) tools
-        return { permissionDecision: "deny" as const };
-      }
-
+      // MCP tools from a wildcard server: we cannot enumerate them statically,
+      // so we fall back to allow-all here (same as no hook).
+      // If you know specific tool names to block, use --disable-tool instead.
       return undefined;
     };
   }
@@ -135,6 +160,8 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
           ].join("\n"),
         },
         ...(mcpServers ? { mcpServers } : {}),
+        ...(sessionAvailableTools !== undefined ? { availableTools: sessionAvailableTools } : {}),
+        ...(sessionExcludedTools  !== undefined ? { excludedTools:  sessionExcludedTools  } : {}),
         onPermissionRequest: approveAll,
         workingDirectory: process.cwd(),
         hooks: Object.keys(hooks).length > 0 ? hooks : undefined,
@@ -182,14 +209,21 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
         const idx = toolCallIdToIndex.get(toolCallId);
         if (idx !== undefined) {
           const t = toolsInvoked[idx];
-          // Prefer detailedContent (raw output) over condensed content
-          t.result = e?.data?.result?.detailedContent ?? e?.data?.result?.content ?? e?.data?.result;
+          const raw = e?.data?.result;
+          if (raw !== undefined) {
+            // Prefer detailedContent (raw output) over condensed content
+            t.result = raw.detailedContent ?? raw.content ?? raw;
+          } else {
+            // Tool was denied by hook or produced no output
+            t.result = e?.data?.success === false ? "(denied)" : "(no output)";
+          }
           const startTime = toolStartTimes.get(toolCallId);
           t.durationMs = startTime !== undefined ? Date.now() - startTime : 0;
           toolCallIdToIndex.delete(toolCallId);
           toolStartTimes.delete(toolCallId);
           if (options.stream) {
-            process.stdout.write(`  ✓  ${t.toolName} (${t.durationMs.toLocaleString()} ms)\n\n`);
+            const icon = e?.data?.success === false ? "✗" : "✓";
+            process.stdout.write(`  ${icon}  ${t.toolName} (${t.durationMs.toLocaleString()} ms)\n\n`);
           }
         }
       });
