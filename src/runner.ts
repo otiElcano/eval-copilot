@@ -67,38 +67,90 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     }
   }
 
-  // ── 5. Build hooks (disable-builtin-mcps / disable-native-tools / disable-tool / allow-tool) ──
+  // ── 5. Build tool-gating via onPreToolUse hook ───────────────────────────
+  //
+  // IMPORTANT: SessionConfig.availableTools / excludedTools are GLOBAL filters
+  // that also suppress external MCP tools from the LLM's tool list.  Using
+  // them to block native tools would silently strip all MCP-provided tools too,
+  // because the SDK applies the filter before presenting tools to the model.
+  //
+  // Instead we gate tools exclusively via onPreToolUse:
+  //   • The hook fires AFTER the LLM has decided to call a tool, but BEFORE
+  //     the tool executes. Returning { permissionDecision: "deny" } stops
+  //     execution and reports the denial to the model, which then adapts.
+  //   • "(pending)" in the report only appears when execution_complete fires
+  //     without a result; our event handler now maps that to "(denied)" so
+  //     the report always shows a meaningful status.
+  //   • SDK-native excludedTools IS still used for plain --disable-tool (no
+  //     global disable) because in that case we never touch MCP tool names.
+  //
+  // Decision table for onPreToolUse:
+  //   1. --allow-tool X         → always allow, regardless of disable flags
+  //   2. --disable-tool X       → always deny  (allow wins if both are set)
+  //   3. --disable-native-tools:
+  //        • non-wildcard MCP   → allow if tool is in the MCP config's explicit
+  //                               tool list; deny all others
+  //        • wildcard MCP       → cannot distinguish MCP from native at this
+  //                               point → allow all (best-effort)
+
   const explicitlyDisabled = new Set(options.disabledTools);
-  const allowedToolNames = new Set(options.allowedTools);
+  const allowedToolNames   = new Set(options.allowedTools);
+  const disableAllNative   = options.disableNativeTools;
+
   const hooks: SessionConfig["hooks"] = {};
 
-  const disableAllNative = options.disableNativeTools || options.disableBuiltinMcps;
+  // Only install the hook when there's actually something to gate.
+  const needsHook = disableAllNative || explicitlyDisabled.size > 0;
 
-  if (disableAllNative || explicitlyDisabled.size > 0) {
+  if (needsHook) {
     hooks.onPreToolUse = async (input) => {
       const { toolName } = input;
 
-      // --allow-tool whitelist takes absolute priority over all deny rules
-      if (allowedToolNames.has(toolName)) return undefined;
+      // Rule 1 — explicit allow-list always wins.
+      if (
+        allowedToolNames.has(toolName) ||
+        // Allow if the user provided a short name like "write" and the
+        // runtime tool name contains or ends with that token (e.g.
+        // "filesystem-write_file" or "kali_mcp-write_file"). This makes
+        // `--allow-tool write` more ergonomic.
+        [...allowedToolNames].some((a) => a && (toolName === a || toolName.endsWith(`-${a}`) || toolName.endsWith(`_${a}`) || toolName.includes(a)))
+      ) return undefined;
 
-      // Always deny tools in the explicit block-list
-      if (explicitlyDisabled.has(toolName)) {
+      // Rule 2 — explicit block-list.
+      if (
+        explicitlyDisabled.has(toolName) ||
+        [...explicitlyDisabled].some((d) => d && (toolName === d || toolName.endsWith(`-${d}`) || toolName.endsWith(`_${d}`) || toolName.includes(d)))
+      ) {
         return { permissionDecision: "deny" as const };
       }
 
-      // --disable-builtin-mcps / --disable-native-tools: deny everything that isn't a user-configured MCP tool
+      // Rule 3 — global native-tool disable.
       if (disableAllNative) {
-        // Allow if wildcard MCP (all tools are MCP tools)
-        if (mcpHasWildcard) return undefined;
-        // Allow if the tool is explicitly listed as an MCP tool
+        if (mcpHasWildcard) {
+          // Wildcard MCP: we cannot enumerate MCP tool names upfront.
+          // Allow everything so external MCP tools remain usable.
+          return undefined;
+        }
+        // Non-wildcard: allow only tools declared in the MCP config.
         if (mcpToolNames.has(toolName)) return undefined;
-        // Deny all other (native / built-in) tools
+        // Also be liberal with short allow tokens: if the toolName ends with
+        // the declared token (e.g. "filesystem-write_file") allow it.
+        if ([...mcpToolNames].some((t) => t && (toolName === t || toolName.endsWith(`-${t}`) || toolName.endsWith(`_${t}`) || toolName.includes(t)))) return undefined;
+        // Deny everything else (native Copilot built-in tools).
         return { permissionDecision: "deny" as const };
       }
 
       return undefined;
     };
   }
+
+  // For plain --disable-tool (no global disable) we additionally pass
+  // excludedTools so the LLM never sees those tools at all, which avoids
+  // spurious tool calls that would just be denied by the hook.
+  const sessionExcludedTools: string[] | undefined =
+    (!disableAllNative && explicitlyDisabled.size > 0)
+      ? [...explicitlyDisabled].filter((t) => !allowedToolNames.has(t))
+      : undefined;
 
   // ── 6. Iterate ────────────────────────────────────────────────────────────
   const results: IterationResult[] = [];
@@ -135,6 +187,7 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
           ].join("\n"),
         },
         ...(mcpServers ? { mcpServers } : {}),
+        ...(sessionExcludedTools !== undefined ? { excludedTools: sessionExcludedTools } : {}),
         onPermissionRequest: approveAll,
         workingDirectory: process.cwd(),
         hooks: Object.keys(hooks).length > 0 ? hooks : undefined,
@@ -182,14 +235,21 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
         const idx = toolCallIdToIndex.get(toolCallId);
         if (idx !== undefined) {
           const t = toolsInvoked[idx];
-          // Prefer detailedContent (raw output) over condensed content
-          t.result = e?.data?.result?.detailedContent ?? e?.data?.result?.content ?? e?.data?.result;
+          const raw = e?.data?.result;
+          if (raw !== undefined) {
+            // Prefer detailedContent (raw output) over condensed content
+            t.result = raw.detailedContent ?? raw.content ?? raw;
+          } else {
+            // Tool was denied by hook or produced no output
+            t.result = e?.data?.success === false ? "(denied)" : "(no output)";
+          }
           const startTime = toolStartTimes.get(toolCallId);
           t.durationMs = startTime !== undefined ? Date.now() - startTime : 0;
           toolCallIdToIndex.delete(toolCallId);
           toolStartTimes.delete(toolCallId);
           if (options.stream) {
-            process.stdout.write(`  ✓  ${t.toolName} (${t.durationMs.toLocaleString()} ms)\n\n`);
+            const icon = e?.data?.success === false ? "✗" : "✓";
+            process.stdout.write(`  ${icon}  ${t.toolName} (${t.durationMs.toLocaleString()} ms)\n\n`);
           }
         }
       });

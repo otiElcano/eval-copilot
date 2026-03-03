@@ -26,11 +26,6 @@ program
     false
   )
   .option(
-    "--disable-builtin-mcps",
-    "Disable all built-in (native) MCP tools — mirrors `copilot --disable-builtin-mcps`",
-    false
-  )
-  .option(
     "--disable-tool <name>",
     "Block a specific native tool by name (repeatable, e.g. --disable-tool read_file --disable-tool web_search)",
     (value: string, previous: string[]) => previous.concat([value]),
@@ -56,7 +51,6 @@ const rawOpts = program.opts<{
   model: string;
   mcp?: string;
   disableNativeTools: boolean;
-  disableBuiltinMcps: boolean;
   disableTool: string[];
   allowTool: string[];
   stream: boolean;
@@ -68,7 +62,6 @@ const options: EvalOptions = {
   model: rawOpts.model,
   mcp: rawOpts.mcp,
   disableNativeTools: rawOpts.disableNativeTools,
-  disableBuiltinMcps: rawOpts.disableBuiltinMcps,
   disabledTools: rawOpts.disableTool,
   allowedTools: rawOpts.allowTool,
   stream: rawOpts.stream,
@@ -87,7 +80,6 @@ console.log(`   Iterations : ${options.iterations}`);
 if (options.mcp) console.log(`   MCP config : ${options.mcp}`);
 
 if (options.disableNativeTools) console.log(`   Native tools  : ALL DISABLED`);
-if (options.disableBuiltinMcps) console.log(`   Built-in MCPs : DISABLED`);
 if (options.disabledTools.length > 0) console.log(`   Disabled tools: ${options.disabledTools.join(", ")}`);
 if (options.allowedTools.length > 0) console.log(`   Allowed tools : ${options.allowedTools.join(", ")}`);
 if (options.stream) console.log(`   Streaming  : enabled`);

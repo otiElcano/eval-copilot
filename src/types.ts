@@ -36,9 +36,7 @@ export interface EvalOptions {
   model: string;
   mcp?: string;
   disableNativeTools: boolean;
-  /** Disable all built-in (native) MCP tools — mirrors `copilot --disable-builtin-mcps`. */
-  disableBuiltinMcps: boolean;
-  /** Individual native tool names to block (additive with disableNativeTools / disableBuiltinMcps). */
+  /** Individual native tool names to block (additive with disableNativeTools). */
   disabledTools: string[];
   /** Explicit tool whitelist — these tools are always allowed regardless of any disable flag.
    *  Mirrors `copilot --allow-tool <name>` (repeatable). */
