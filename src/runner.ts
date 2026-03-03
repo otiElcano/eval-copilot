@@ -87,7 +87,7 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
   // Decision table for onPreToolUse:
   //   1. --allow-tool X         → always allow, regardless of disable flags
   //   2. --disable-tool X       → always deny  (allow wins if both are set)
-  //   3. --disable-builtin-mcps / --disable-native-tools:
+  //   3. --disable-native-tools:
   //        • non-wildcard MCP   → allow if tool is in the MCP config's explicit
   //                               tool list; deny all others
   //        • wildcard MCP       → cannot distinguish MCP from native at this
@@ -95,7 +95,7 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
 
   const explicitlyDisabled = new Set(options.disabledTools);
   const allowedToolNames   = new Set(options.allowedTools);
-  const disableAllNative   = options.disableNativeTools || options.disableBuiltinMcps;
+  const disableAllNative   = options.disableNativeTools;
 
   const hooks: SessionConfig["hooks"] = {};
 
@@ -107,10 +107,20 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
       const { toolName } = input;
 
       // Rule 1 — explicit allow-list always wins.
-      if (allowedToolNames.has(toolName)) return undefined;
+      if (
+        allowedToolNames.has(toolName) ||
+        // Allow if the user provided a short name like "write" and the
+        // runtime tool name contains or ends with that token (e.g.
+        // "filesystem-write_file" or "kali_mcp-write_file"). This makes
+        // `--allow-tool write` more ergonomic.
+        [...allowedToolNames].some((a) => a && (toolName === a || toolName.endsWith(`-${a}`) || toolName.endsWith(`_${a}`) || toolName.includes(a)))
+      ) return undefined;
 
       // Rule 2 — explicit block-list.
-      if (explicitlyDisabled.has(toolName)) {
+      if (
+        explicitlyDisabled.has(toolName) ||
+        [...explicitlyDisabled].some((d) => d && (toolName === d || toolName.endsWith(`-${d}`) || toolName.endsWith(`_${d}`) || toolName.includes(d)))
+      ) {
         return { permissionDecision: "deny" as const };
       }
 
@@ -123,6 +133,9 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
         }
         // Non-wildcard: allow only tools declared in the MCP config.
         if (mcpToolNames.has(toolName)) return undefined;
+        // Also be liberal with short allow tokens: if the toolName ends with
+        // the declared token (e.g. "filesystem-write_file") allow it.
+        if ([...mcpToolNames].some((t) => t && (toolName === t || toolName.endsWith(`-${t}`) || toolName.endsWith(`_${t}`) || toolName.includes(t)))) return undefined;
         // Deny everything else (native Copilot built-in tools).
         return { permissionDecision: "deny" as const };
       }

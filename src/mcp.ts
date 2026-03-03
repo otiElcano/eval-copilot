@@ -73,7 +73,15 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
       hasWildcard = true;
     } else if (Array.isArray(tools)) {
       for (const t of tools) {
-        if (typeof t === "string") toolNames.add(t);
+        if (typeof t === "string") {
+          toolNames.add(t);
+          // Also add the server-prefixed variant which the SDK often uses
+          // when registering MCP tools (e.g. "serverName-toolName"). This
+          // helps downstream checks that compare runtime `toolName` values
+          // against the declared MCP tool list when `--disable-native-tools`
+          // is in effect.
+          toolNames.add(`${name}-${t}`);
+        }
       }
     }
 
