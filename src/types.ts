@@ -16,6 +16,7 @@ export interface UsageInfo {
 export interface IterationResult {
   iterationNumber: number;
   response?: string;
+  thinking?: string;
   durationMs: number;
   toolsInvoked: ToolInvocationRecord[];
   error?: string;

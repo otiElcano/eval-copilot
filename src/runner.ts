@@ -50,6 +50,15 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
   }
   const resolvedModel = modelMatch.id;
 
+  // Determine whether to enable reasoning.
+  // Cast to unknown first to safely access optional capability fields.
+  const modelAny = modelMatch as unknown as {
+    capabilities?: { supports?: { reasoningEffort?: boolean } };
+    defaultReasoningEffort?: string;
+  };
+  const supportsReasoning = modelAny.capabilities?.supports?.reasoningEffort === true;
+  const defaultReasoningEffort = modelAny.defaultReasoningEffort ?? "medium";
+
   // ── 4. Parse MCP config ───────────────────────────────────────────────────
   let mcpServers: SessionConfig["mcpServers"] | undefined;
   let mcpToolNames = new Set<string>();
@@ -188,6 +197,9 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
         },
         ...(mcpServers ? { mcpServers } : {}),
         ...(sessionExcludedTools !== undefined ? { excludedTools: sessionExcludedTools } : {}),
+        // Enable reasoning output for models that support it so that
+        // assistant.reasoning events and/or reasoningText are populated.
+        ...(supportsReasoning ? { reasoningEffort: defaultReasoningEffort as "low" | "medium" | "high" | "xhigh" } : {}),
         onPermissionRequest: approveAll,
         workingDirectory: process.cwd(),
         hooks: Object.keys(hooks).length > 0 ? hooks : undefined,
@@ -198,6 +210,11 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
       // Map toolCallId -> index in toolsInvoked for reliable start↔complete pairing
       const toolCallIdToIndex = new Map<string, number>();
       const toolStartTimes = new Map<string, number>(); // keyed by toolCallId
+
+      // Accumulate reasoning / thinking blocks
+      const thinkingParts: string[] = [];
+      // Track reasoning delta accumulation per reasoningId (fallback path)
+      const reasoningDeltaMap = new Map<string, string>();
 
       // Use a loose-typed helper to avoid overload resolution issues with SDK event strings
       type LooseSession = { on(eventType: string, handler: (event: unknown) => void): () => void };
@@ -256,6 +273,27 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
 
       // Capture usage info via event
       let usageInfo: UsageInfo | undefined;
+      // Capture each completed reasoning block emitted by the model
+      const unsubReasoning = anySession.on("assistant.reasoning", (event: unknown) => {
+        const e = event as { data?: { reasoningId?: string; content?: string } };
+        const content = e?.data?.content;
+        if (content) {
+          // Remove the delta bucket for this id — we have the final version
+          if (e?.data?.reasoningId) reasoningDeltaMap.delete(e.data.reasoningId);
+          thinkingParts.push(content);
+        }
+      });
+
+      // Accumulate delta tokens as fallback (some models stream deltas only)
+      const unsubReasoningDelta = anySession.on("assistant.reasoning_delta", (event: unknown) => {
+        const e = event as { data?: { reasoningId?: string; deltaContent?: string } };
+        const id = e?.data?.reasoningId ?? "__default__";
+        const delta = e?.data?.deltaContent;
+        if (delta) {
+          reasoningDeltaMap.set(id, (reasoningDeltaMap.get(id) ?? "") + delta);
+        }
+      });
+
       const unsubUsage = anySession.on("assistant.usage", (event: unknown) => {
         const e = event as { data: { model: string; inputTokens?: number; outputTokens?: number } };
         usageInfo = {
@@ -267,12 +305,28 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
 
       // Send prompt and wait for the final response (no timeout cap)
       const responseEvent = await session.sendAndWait({ prompt: options.prompt }, 60000 * 60);
-      const responseText = (responseEvent as { data?: { content?: string } } | undefined)?.data?.content;
+      const responseData = (responseEvent as { data?: { content?: string; reasoningText?: string; reasoningOpaque?: string } } | undefined)?.data;
+      const responseText = responseData?.content;
+      // Some models (e.g. o-series) embed thinking in reasoningText on the
+      // final message instead of emitting separate assistant.reasoning events.
+      const inlineReasoning = responseData?.reasoningText ?? responseData?.reasoningOpaque;
+      if (inlineReasoning && !thinkingParts.includes(inlineReasoning)) {
+        thinkingParts.push(inlineReasoning);
+      }
+
+      // Flush any delta-only reasoning blocks that never received a final assistant.reasoning event
+      for (const accumulated of reasoningDeltaMap.values()) {
+        if (accumulated && !thinkingParts.includes(accumulated)) {
+          thinkingParts.push(accumulated);
+        }
+      }
 
       // Clean up subscriptions
       unsubStart();
       unsubComplete();
       unsubUsage();
+      unsubReasoning();
+      unsubReasoningDelta();
       unsubDelta?.();
 
       const durationMs = Date.now() - iterStart;
@@ -285,6 +339,7 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
       results.push({
         iterationNumber: i,
         response: responseText ?? "(no response)",
+        thinking: thinkingParts.length > 0 ? thinkingParts.join("\n\n") : undefined,
         durationMs,
         toolsInvoked,
         usageInfo,
