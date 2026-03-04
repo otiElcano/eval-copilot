@@ -290,6 +290,49 @@ function buildCSS(columnCount: number): string {
     }
     .usage-bar span { color: #79c0ff; }
 
+    /* ── Thinking / reasoning collapsible ── */
+    .thinking-section {
+      border-bottom: 1px solid #30363d;
+    }
+    .thinking-section > summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      background: #161b22;
+      transition: background 0.15s;
+    }
+    .thinking-section > summary:hover { background: #1c2128; }
+    .thinking-section > summary::before {
+      content: "▶";
+      font-size: 0.6rem;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .thinking-section[open] > summary::before { transform: rotate(90deg); }
+    .thinking-body {
+      padding: 12px 16px;
+      background: #0d1117;
+      border-top: 1px solid #21262d;
+      font-size: 0.82rem;
+      color: #8b949e;
+      font-style: italic;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 360px;
+      overflow-y: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      line-height: 1.55;
+    }
+
     /* ── Latency bar ── */
     .latency-bar-wrap {
       margin-top: 12px;
@@ -423,6 +466,14 @@ function buildHTML(
           </div>`
           : "";
 
+      const thinkingBlock =
+        result.thinking
+          ? `<details class="thinking-section">
+        <summary>Model Thinking</summary>
+        <div class="thinking-body">${escapeHtml(result.thinking)}</div>
+      </details>`
+          : "";
+
       const usageBar =
         result.usageInfo
           ? `<div class="usage-bar">Tokens: <span>${(result.usageInfo.inputTokens ?? 0).toLocaleString()} in</span> / <span>${(result.usageInfo.outputTokens ?? 0).toLocaleString()} out</span></div>`
@@ -447,6 +498,7 @@ function buildHTML(
         <span class="badge badge-latency">⏱ ${result.durationMs.toLocaleString()} ms</span>
         ${badge}
       </div>
+      ${thinkingBlock}
       <div class="card-body">
         ${bodyContent}
         ${usageBar}
