@@ -1,5 +1,7 @@
 # eval-copilot
 
+[Repository](https://github.com/otiElcano/eval-copilot)
+
 A CLI tool that runs the same prompt N times through GitHub Copilot and generates a **side-by-side HTML report** to compare response variations across iterations.
 
 ![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen) ![TypeScript](https://img.shields.io/badge/language-TypeScript-blue) ![SDK](https://img.shields.io/badge/%40github%2Fcopilot--sdk-0.1.26-purple)
@@ -30,8 +32,8 @@ Language models are non-deterministic — the same prompt can produce meaningful
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd RepeatPrompt
+git clone https://github.com/otiElcano/eval-copilot.git
+cd eval-copilot
 npm install
 npm run build
 ```
