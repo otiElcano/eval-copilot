@@ -1,5 +1,3 @@
-import type { MCPLocalServerConfig, MCPRemoteServerConfig } from "@github/copilot-sdk";
-
 export interface ToolInvocationRecord {
   toolName: string;
   args: unknown;
@@ -16,18 +14,11 @@ export interface UsageInfo {
 export interface IterationResult {
   iterationNumber: number;
   response?: string;
+  thinking?: string;
   durationMs: number;
   toolsInvoked: ToolInvocationRecord[];
   error?: string;
   usageInfo?: UsageInfo;
-}
-
-export interface MCPServerEntry {
-  [name: string]: MCPLocalServerConfig | MCPRemoteServerConfig;
-}
-
-export interface MCPConfig {
-  servers: MCPServerEntry;
 }
 
 export interface EvalOptions {
@@ -35,11 +26,11 @@ export interface EvalOptions {
   iterations: number;
   model: string;
   mcp?: string;
-  disableNativeTools: boolean;
-  /** Individual native tool names to block (additive with disableNativeTools). */
+  /** Tool names to block. Applies to both native Copilot tools and MCP tools.
+   *  All tools are enabled by default; only tools listed here are disabled. */
   disabledTools: string[];
-  /** Explicit tool whitelist — these tools are always allowed regardless of any disable flag.
-   *  Mirrors `copilot --allow-tool <name>` (repeatable). */
+  /** Whitelist of tool names. When non-empty, ONLY these tools are allowed;
+   *  every other tool is denied. --disable-tool still wins over --allow-tool. */
   allowedTools: string[];
   /** Stream each iteration's output to the terminal in real-time. */
   stream: boolean;
