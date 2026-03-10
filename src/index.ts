@@ -4,6 +4,8 @@ import { runEval } from "./runner.js";
 import { generateReport } from "./report.js";
 import type { EvalOptions } from "./types.js";
 
+// ── CLI definition ────────────────────────────────────────────────────────────
+
 const program = new Command();
 
 program
@@ -21,19 +23,14 @@ program
   )
   .option("--mcp <path>", "Path to an MCP server configuration JSON file")
   .option(
-    "--disable-native-tools",
-    "Block ALL native Copilot tools (workspace search, etc.) via onPreToolUse hook",
-    false
-  )
-  .option(
     "--disable-tool <name>",
-    "Block a specific native tool by name (repeatable, e.g. --disable-tool read_file --disable-tool web_search)",
+    "Disable a specific tool by name — native or MCP (repeatable). Always wins over --allow-tool.",
     (value: string, previous: string[]) => previous.concat([value]),
     [] as string[]
   )
   .option(
     "--allow-tool <name>",
-    "Explicitly allow a tool by name even when disable flags are active (repeatable, e.g. --allow-tool write --allow-tool read_file)",
+    "Whitelist a tool by name (repeatable). When at least one --allow-tool is given, ALL other tools are denied unless also listed. --disable-tool overrides this.",
     (value: string, previous: string[]) => previous.concat([value]),
     [] as string[]
   )
@@ -45,60 +42,67 @@ program
 
 program.parse(process.argv);
 
-const rawOpts = program.opts<{
+// ── Options parsing & validation ──────────────────────────────────────────────
+
+const raw = program.opts<{
   prompt: string;
   iterations: string;
   model: string;
   mcp?: string;
-  disableNativeTools: boolean;
   disableTool: string[];
   allowTool: string[];
   stream: boolean;
 }>();
 
-const options: EvalOptions = {
-  prompt: rawOpts.prompt,
-  iterations: Math.max(1, parseInt(rawOpts.iterations, 10) || 3),
-  model: rawOpts.model,
-  mcp: rawOpts.mcp,
-  disableNativeTools: rawOpts.disableNativeTools,
-  disabledTools: rawOpts.disableTool,
-  allowedTools: rawOpts.allowTool,
-  stream: rawOpts.stream,
-};
-
-// ── Validate iterations ───────────────────────────────────────────────────────
-if (isNaN(parseInt(rawOpts.iterations, 10))) {
-  console.error(`[eval-copilot] Error: --iterations must be a number, got "${rawOpts.iterations}"`);
+const parsedIterations = parseInt(raw.iterations, 10);
+if (isNaN(parsedIterations)) {
+  console.error(`[eval-copilot] Error: --iterations must be a number, got "${raw.iterations}"`);
   process.exit(1);
 }
 
-console.log(`\n🔁  eval-copilot`);
-console.log(`   Prompt     : ${options.prompt.length > 80 ? options.prompt.slice(0, 77) + "..." : options.prompt}`);
-console.log(`   Model      : ${options.model}`);
-console.log(`   Iterations : ${options.iterations}`);
-if (options.mcp) console.log(`   MCP config : ${options.mcp}`);
+const options: EvalOptions = {
+  prompt:       raw.prompt,
+  iterations:   Math.max(1, parsedIterations),
+  model:        raw.model,
+  mcp:          raw.mcp,
+  disabledTools: raw.disableTool,
+  allowedTools:  raw.allowTool,
+  stream:        raw.stream,
+};
 
-if (options.disableNativeTools) console.log(`   Native tools  : ALL DISABLED`);
-if (options.disabledTools.length > 0) console.log(`   Disabled tools: ${options.disabledTools.join(", ")}`);
-if (options.allowedTools.length > 0) console.log(`   Allowed tools : ${options.allowedTools.join(", ")}`);
-if (options.stream) console.log(`   Streaming  : enabled`);
-console.log();
+// ── Startup banner ────────────────────────────────────────────────────────────
 
-(async () => {
+function printBanner(opts: EvalOptions): void {
+  const truncatedPrompt =
+    opts.prompt.length > 80 ? opts.prompt.slice(0, 77) + "..." : opts.prompt;
+
+  console.log(`\n🔁  eval-copilot`);
+  console.log(`   Prompt     : ${truncatedPrompt}`);
+  console.log(`   Model      : ${opts.model}`);
+  console.log(`   Iterations : ${opts.iterations}`);
+  if (opts.mcp)                       console.log(`   MCP config : ${opts.mcp}`);
+  if (opts.allowedTools.length > 0)   console.log(`   Allowed tools : ${opts.allowedTools.join(", ")} (whitelist — all others denied)`);
+  if (opts.disabledTools.length > 0)  console.log(`   Disabled tools: ${opts.disabledTools.join(", ")}`);
+  if (opts.stream)                    console.log(`   Streaming  : enabled`);
+  console.log();
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  printBanner(options);
+
   let results: Awaited<ReturnType<typeof runEval>>;
-
   try {
     results = await runEval(options);
   } catch (err) {
-    const message = (err as Error).message ?? String(err);
-    console.error(`\n[eval-copilot] Fatal error: ${message}`);
+    console.error(`\n[eval-copilot] Fatal error: ${(err as Error).message ?? String(err)}`);
     process.exit(1);
   }
 
-  // ── Terminal summary ────────────────────────────────────────────────────────
+  // ── Terminal summary ──────────────────────────────────────────────────────
   const successes = results.filter((r) => !r.error).length;
-  const errors = results.length - successes;
+  const errors    = results.length - successes;
   const avgLatency =
     successes > 0
       ? Math.round(
@@ -116,16 +120,17 @@ console.log();
   console.log(`   Avg latency      : ${avgLatency.toLocaleString()}ms`);
   console.log();
 
-  // ── Generate HTML report ────────────────────────────────────────────────────
+  // ── HTML report ───────────────────────────────────────────────────────────
   let reportFile: string;
   try {
     reportFile = await generateReport(results, options.prompt, options.model);
   } catch (err) {
-    const message = (err as Error).message ?? String(err);
-    console.error(`[eval-copilot] Failed to write report: ${message}`);
+    console.error(`[eval-copilot] Failed to write report: ${(err as Error).message ?? String(err)}`);
     process.exit(1);
   }
 
   console.log(`📄  Report generated: ${reportFile}`);
   console.log();
-})();
+}
+
+main();

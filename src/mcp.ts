@@ -1,15 +1,21 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { MCPServerConfig } from "@github/copilot-sdk";
-import type { MCPConfig } from "./types.js";
+import type { MCPLocalServerConfig, MCPRemoteServerConfig, MCPServerConfig } from "@github/copilot-sdk";
+
+// ── Internal types ────────────────────────────────────────────────────────────
+
+interface MCPServerEntry {
+  [name: string]: MCPLocalServerConfig | MCPRemoteServerConfig;
+}
+
+interface MCPConfig {
+  servers: MCPServerEntry;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export interface ParsedMCPConfig {
   mcpServers: Record<string, MCPServerConfig>;
-  /** Names of all explicitly-listed tools across all servers.
-   *  Empty set means at least one server uses "*" (all tools are MCP tools). */
-  toolNames: Set<string>;
-  /** True when any server declares tools: "*" */
-  hasWildcard: boolean;
 }
 
 export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig> {
@@ -46,8 +52,6 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
   }
 
   const mcpServers: Record<string, MCPServerConfig> = {};
-  const toolNames = new Set<string>();
-  let hasWildcard = false;
 
   for (const [name, server] of Object.entries(config.servers)) {
     // Validate required fields depending on type
@@ -67,24 +71,6 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
       }
     }
 
-    // Collect tool names for the --disable-native-tools hook
-    const tools = s["tools"] as string | string[] | undefined;
-    if (tools === "*") {
-      hasWildcard = true;
-    } else if (Array.isArray(tools)) {
-      for (const t of tools) {
-        if (typeof t === "string") {
-          toolNames.add(t);
-          // Also add the server-prefixed variant which the SDK often uses
-          // when registering MCP tools (e.g. "serverName-toolName"). This
-          // helps downstream checks that compare runtime `toolName` values
-          // against the declared MCP tool list when `--disable-native-tools`
-          // is in effect.
-          toolNames.add(`${name}-${t}`);
-        }
-      }
-    }
-
     // Normalize the tools field: SDK requires string[], not a bare "*" string.
     // An absent tools field defaults to ["*"] (all tools).
     const normalizedServer = { ...s } as Record<string, unknown>;
@@ -97,5 +83,5 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
     mcpServers[name] = normalizedServer as unknown as MCPServerConfig;
   }
 
-  return { mcpServers, toolNames, hasWildcard };
+  return { mcpServers };
 }

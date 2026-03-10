@@ -63,7 +63,8 @@ Options:
   -x, --iterations <number>  Number of times to run the prompt (default: 3)
   -m, --model <name>         Model to use (default: "gpt-4o")
   --mcp <path>               Path to an MCP server config JSON file
-  --disable-native-tools     Block built-in Copilot tools via hook
+  --disable-tool <name>      Disable a specific tool by name (repeatable). Wins over --allow-tool.
+  --allow-tool <name>        Whitelist a tool (repeatable). When present, only listed tools are allowed.
   -V, --version              Print version
   -h, --help                 Show help
 ```
@@ -87,15 +88,28 @@ node dist/index.js \
   -m claude-sonnet-4.5
 ```
 
-### Disable native Copilot tools (e.g. workspace search)
+### Whitelist — allow only specific tools
 
-Forces the model to answer from its own knowledge alone:
+When at least one `--allow-tool` is given, **only** those tools are permitted; everything else is denied. `--disable-tool` still overrides `--allow-tool` if both name the same tool:
+
+```bash
+node dist/index.js \
+  -p "Create a file /tmp/hello.txt with the text Hello" \
+  -x 3 \
+  --allow-tool create_file \
+  --allow-tool write_file
+```
+
+### Disable specific tools
+
+Block individual tools by name — works for native Copilot tools **and** MCP tools. All tools are enabled by default:
 
 ```bash
 node dist/index.js \
   -p "What is the capital of France?" \
   -x 3 \
-  --disable-native-tools
+  --disable-tool bash \
+  --disable-tool web_search
 ```
 
 ### With MCP servers
@@ -112,16 +126,16 @@ node dist/index.js \
   --mcp ./mcp-config.json
 ```
 
-### MCP servers + native tools disabled (MCP-only mode)
+### MCP servers + selective tool disabling
 
-The model can only use tools declared in your MCP config — all native Copilot tools are blocked:
+Disable specific tools even when using MCP — the block applies to both native and MCP tools:
 
 ```bash
 node dist/index.js \
   -p "Search the web for the latest Node.js LTS version" \
   -x 3 \
   --mcp ./mcp-config.json \
-  --disable-native-tools
+  --disable-tool bash
 ```
 
 ---
@@ -173,15 +187,13 @@ See [mcp-config.example.json](mcp-config.example.json) for a ready-to-use templa
 }
 ```
 
-### `tools` field and `--disable-native-tools`
+### `tools` field and `--disable-tool`
 
-When `--disable-native-tools` is active, the tool intercepts every tool call via the SDK's `onPreToolUse` hook:
+All tools are enabled by default. Use `--disable-tool <name>` (repeatable) to block any tool by name — native Copilot tools and MCP tools are treated the same way:
 
-- Tools **listed by name** in any server's `tools` array → **allowed**
-- Servers using `tools: "*"` → **all** tool calls are allowed (wildcard)
-- Everything else (native Copilot tools) → **denied**
-
-If you pass `--disable-native-tools` without `--mcp`, **all** tool calls are denied.
+- The name is matched **exactly** or as a **suffix token**: `bash` blocks `functions.bash` and `kali_mcp-bash` too.
+- Disabled tools are passed to the session via `excludedTools` (the LLM never sees them) **and** blocked in the `onPreToolUse` hook as a defensive fallback.
+- With no `--disable-tool` flags, every tool is available to the model.
 
 ---
 
