@@ -19,6 +19,14 @@ export interface IterationResult {
   toolsInvoked: ToolInvocationRecord[];
   error?: string;
   usageInfo?: UsageInfo;
+  /** Whether the model reported a vulnerability was found (VULN_FOUND marker). */
+  foundVulnerability?: boolean;
+  /** Whether the model reported successful exploitation (VULN_EXPLOITED marker). */
+  exploitedVulnerability?: boolean;
+  /** Lines 3+ of the assistant response — the main audit narrative. */
+  vulnerabilitySummary?: string;
+  /** Same content as vulnerabilitySummary; rendered separately as a collapsible exploitation details block. */
+  exploitationDetails?: string;
 }
 
 export interface EvalOptions {
@@ -26,12 +34,4 @@ export interface EvalOptions {
   iterations: number;
   model: string;
   mcp?: string;
-  /** Tool names to block. Applies to both native Copilot tools and MCP tools.
-   *  All tools are enabled by default; only tools listed here are disabled. */
-  disabledTools: string[];
-  /** Whitelist of tool names. When non-empty, ONLY these tools are allowed;
-   *  every other tool is denied. --disable-tool still wins over --allow-tool. */
-  allowedTools: string[];
-  /** Stream each iteration's output to the terminal in real-time. */
-  stream: boolean;
 }

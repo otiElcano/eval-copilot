@@ -290,6 +290,60 @@ function buildCSS(columnCount: number): string {
     }
     .usage-bar span { color: #79c0ff; }
 
+    /* ── Vuln badge row ── */
+    .vuln-row {
+      display: flex;
+      gap: 8px;
+      padding: 8px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-wrap: wrap;
+    }
+    .badge-vuln-found-true  { background: #1a3a1a; color: #3fb950; border: 1px solid #2ea043; }
+    .badge-vuln-found-false { background: #3a1a1a; color: #f85149; border: 1px solid #6e2b2b; }
+    .badge-vuln-exploited-true  { background: #1a3a1a; color: #3fb950; border: 1px solid #2ea043; }
+    .badge-vuln-exploited-false { background: #1a1f3a; color: #8b949e; border: 1px solid #30363d; }
+
+    /* ── Exploitation details collapsible ── */
+    .exploit-section {
+      border-top: 1px solid #30363d;
+    }
+    .exploit-section > summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      background: #161b22;
+      transition: background 0.15s;
+    }
+    .exploit-section > summary:hover { background: #1c2128; }
+    .exploit-section > summary::before {
+      content: "▶";
+      font-size: 0.6rem;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .exploit-section[open] > summary::before { transform: rotate(90deg); }
+    .exploit-body {
+      padding: 12px 16px;
+      background: #0d1117;
+      border-top: 1px solid #21262d;
+      font-size: 0.82rem;
+      color: #cdd9e5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
     /* ── Thinking / reasoning collapsible ── */
     .thinking-section {
       border-bottom: 1px solid #30363d;
@@ -379,6 +433,8 @@ function buildHTML(
   const total = results.length;
   const successes = results.filter((r) => !r.error).length;
   const errors = total - successes;
+  const vulnFound    = results.filter((r) => r.foundVulnerability).length;
+  const vulnExploited = results.filter((r) => r.exploitedVulnerability).length;
   const avgLatency =
     successes > 0
       ? Math.round(
@@ -418,6 +474,14 @@ function buildHTML(
       <span class="value">${maxLatency.toLocaleString()}ms</span>
       <span class="label">Max Latency</span>
     </div>
+    <div class="summary-stat success">
+      <span class="value">${vulnFound}/${total}</span>
+      <span class="label">Vuln Found</span>
+    </div>
+    <div class="summary-stat${vulnExploited > 0 ? " error" : ""}">
+      <span class="value">${vulnExploited}/${total}</span>
+      <span class="label">Exploited</span>
+    </div>
   </div>`;
 
   const cards = results
@@ -428,9 +492,31 @@ function buildHTML(
         ? `<span class="badge badge-error">✗ Error</span>`
         : `<span class="badge badge-success">✓ Success</span>`;
 
+      // Vuln badges
+      const foundLabel    = result.foundVulnerability    ? "✅ VULN_FOUND"    : "❌ VULN_FOUND";
+      const exploitLabel  = result.exploitedVulnerability ? "✅ VULN_EXPLOITED" : "❌ VULN_EXPLOITED";
+      const foundClass    = result.foundVulnerability    ? "badge badge-vuln-found-true"    : "badge badge-vuln-found-false";
+      const exploitClass  = result.exploitedVulnerability ? "badge badge-vuln-exploited-true" : "badge badge-vuln-exploited-false";
+      const vulnRow = !isError ? `
+      <div class="vuln-row">
+        <span class="${escapeHtml(foundClass)}">${escapeHtml(foundLabel)}</span>
+        <span class="${escapeHtml(exploitClass)}">${escapeHtml(exploitLabel)}</span>
+      </div>` : "";
+
+      // Body: use parsed vulnerabilitySummary when available, fall back to full response
+      const summaryText = result.vulnerabilitySummary ?? result.response ?? "";
       const bodyContent = isError
         ? `<div class="error-message">${escapeHtml(result.error ?? "Unknown error")}</div>`
-        : formatResponseToHtml(result.response ?? "");
+        : formatResponseToHtml(summaryText);
+
+      // Exploitation details collapsible
+      const exploitBlock =
+        !isError && result.exploitationDetails
+          ? `<details class="exploit-section">
+        <summary>Exploitation Details</summary>
+        <div class="exploit-body">${formatResponseToHtml(result.exploitationDetails)}</div>
+      </details>`
+          : "";
 
       const toolsFooter =
         result.toolsInvoked.length > 0
@@ -498,12 +584,14 @@ function buildHTML(
         <span class="badge badge-latency">⏱ ${result.durationMs.toLocaleString()} ms</span>
         ${badge}
       </div>
+      ${vulnRow}
       ${thinkingBlock}
       <div class="card-body">
         ${bodyContent}
         ${usageBar}
         ${latencyBar}
       </div>
+      ${exploitBlock}
       ${toolsFooter}
     </div>`;
     })

@@ -21,24 +21,7 @@ program
     "Model to use (e.g. gpt-4.1, claude-sonnet-4.5). Validated against available models.",
     "gpt-4.1"
   )
-  .option("--mcp <path>", "Path to an MCP server configuration JSON file")
-  .option(
-    "--disable-tool <name>",
-    "Disable a specific tool by name — native or MCP (repeatable). Always wins over --allow-tool.",
-    (value: string, previous: string[]) => previous.concat([value]),
-    [] as string[]
-  )
-  .option(
-    "--allow-tool <name>",
-    "Whitelist a tool by name (repeatable). When at least one --allow-tool is given, ALL other tools are denied unless also listed. --disable-tool overrides this.",
-    (value: string, previous: string[]) => previous.concat([value]),
-    [] as string[]
-  )
-  .option(
-    "--stream",
-    "Print each iteration's output to the terminal in real-time as it is generated",
-    false
-  );
+  .option("--mcp <path>", "Path to an MCP server configuration JSON file");
 
 program.parse(process.argv);
 
@@ -49,9 +32,6 @@ const raw = program.opts<{
   iterations: string;
   model: string;
   mcp?: string;
-  disableTool: string[];
-  allowTool: string[];
-  stream: boolean;
 }>();
 
 const parsedIterations = parseInt(raw.iterations, 10);
@@ -61,13 +41,10 @@ if (isNaN(parsedIterations)) {
 }
 
 const options: EvalOptions = {
-  prompt:       raw.prompt,
-  iterations:   Math.max(1, parsedIterations),
-  model:        raw.model,
-  mcp:          raw.mcp,
-  disabledTools: raw.disableTool,
-  allowedTools:  raw.allowTool,
-  stream:        raw.stream,
+  prompt:     raw.prompt,
+  iterations: Math.max(1, parsedIterations),
+  model:      raw.model,
+  mcp:        raw.mcp,
 };
 
 // ── Startup banner ────────────────────────────────────────────────────────────
@@ -80,10 +57,7 @@ function printBanner(opts: EvalOptions): void {
   console.log(`   Prompt     : ${truncatedPrompt}`);
   console.log(`   Model      : ${opts.model}`);
   console.log(`   Iterations : ${opts.iterations}`);
-  if (opts.mcp)                       console.log(`   MCP config : ${opts.mcp}`);
-  if (opts.allowedTools.length > 0)   console.log(`   Allowed tools : ${opts.allowedTools.join(", ")} (whitelist — all others denied)`);
-  if (opts.disabledTools.length > 0)  console.log(`   Disabled tools: ${opts.disabledTools.join(", ")}`);
-  if (opts.stream)                    console.log(`   Streaming  : enabled`);
+  if (opts.mcp) console.log(`   MCP config : ${opts.mcp}`);
   console.log();
 }
 
@@ -113,11 +87,16 @@ async function main(): Promise<void> {
       : 0;
 
   console.log();
+  const vulnFound    = results.filter((r) => r.foundVulnerability).length;
+  const vulnExploited = results.filter((r) => r.exploitedVulnerability).length;
+
   console.log(`── Summary ─────────────────────────────────`);
   console.log(`   Total iterations : ${results.length}`);
   console.log(`   Successful       : ${successes}`);
   console.log(`   Errors           : ${errors}`);
   console.log(`   Avg latency      : ${avgLatency.toLocaleString()}ms`);
+  console.log(`   VULN_FOUND       : ${vulnFound}/${results.length} iterations`);
+  console.log(`   VULN_EXPLOITED   : ${vulnExploited}/${results.length} iterations`);
   console.log();
 
   // ── HTML report ───────────────────────────────────────────────────────────

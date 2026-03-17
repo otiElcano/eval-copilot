@@ -41,7 +41,6 @@
   const anySession = session as unknown as LooseSession;
   ```
 - Always call `session.destroy()` in a `finally` block after each iteration
-- The `systemMessage.content` field (append mode) is used to inject per-iteration variation directives — do not remove this mechanism
 
 ### Error handling
 - Per-iteration errors must be caught and stored in `IterationResult.error` — the loop must continue

@@ -1,0 +1,45 @@
+services:
+  eval-copilot:
+    build:
+      context: ..           # project root (where package.json lives)
+      dockerfile: docker/Dockerfile
+    image: eval-copilot:latest
+
+    # Use host networking so the container sees the same network/interfaces
+    # as the host (allows resolving host-only names like `web.dev.local`).
+    # NOTE: `network_mode: "host"` works only on Linux.
+    network_mode: "host"
+
+    # ── Interactive bash session ───────────────────────────────────────────────
+    stdin_open: true   # docker run -i
+    tty: true          # docker run -t
+
+    # ── Volumes ────────────────────────────────────────────────────────────────
+    volumes:
+      # gh CLI credentials — persisted across container restarts
+      # (populated the first time you run `gh auth login` inside the container)
+      - gh-config:/root/.config/gh
+
+      # Docker socket — required by the `time` MCP (runs `docker run mcp/time`)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Mount the host's /etc/hosts so container resolves the same hostnames
+      # e.g. web.dev.local entries defined on the host
+      - /etc/hosts:/etc/hosts:ro
+
+      # Kali MCP server — mounted read-only at /opt/mcp/kali inside the container
+      # The path must match the `command` / `args` in docker/mcp-config.json
+      - /home/kali_rdp/Escritorio/Servidores MCP/MCP-Kali-Server:/opt/mcp/kali:ro
+
+      # Output directory — HTML reports are written here on the host
+      - ../reports:/app/reports
+
+    # ── Extra hosts ────────────────────────────────────────────────────────────
+    # Allows the kali_mcp Python bridge to reach the Kali API server running on the host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+# Named volume so gh credentials survive container restarts
+# (only needs `gh auth login` once)
+volumes:
+  gh-config:
