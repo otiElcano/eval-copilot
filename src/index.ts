@@ -21,7 +21,11 @@ program
     "Model to use (e.g. gpt-4.1, claude-sonnet-4.5). Validated against available models.",
     "gpt-4.1"
   )
-  .option("--mcp <path>", "Path to an MCP server configuration JSON file");
+  .option("--mcp <path>", "Path to an MCP server configuration JSON file")
+  .option(
+    "--token <tok>",
+    "GitHub PAT with Copilot access (bypasses gh CLI auth). Falls back to GITHUB_TOKEN env var."
+  );
 
 program.parse(process.argv);
 
@@ -32,6 +36,7 @@ const raw = program.opts<{
   iterations: string;
   model: string;
   mcp?: string;
+  token?: string;
 }>();
 
 const parsedIterations = parseInt(raw.iterations, 10);
@@ -40,11 +45,15 @@ if (isNaN(parsedIterations)) {
   process.exit(1);
 }
 
+// Resolve token: --token flag > GITHUB_TOKEN env var > undefined (gh CLI fallback)
+const resolvedToken = raw.token ?? process.env["GITHUB_TOKEN"];
+
 const options: EvalOptions = {
   prompt:     raw.prompt,
   iterations: Math.max(1, parsedIterations),
   model:      raw.model,
   mcp:        raw.mcp,
+  token:      resolvedToken,
 };
 
 // ── Startup banner ────────────────────────────────────────────────────────────
@@ -57,7 +66,8 @@ function printBanner(opts: EvalOptions): void {
   console.log(`   Prompt     : ${truncatedPrompt}`);
   console.log(`   Model      : ${opts.model}`);
   console.log(`   Iterations : ${opts.iterations}`);
-  if (opts.mcp) console.log(`   MCP config : ${opts.mcp}`);
+  if (opts.mcp)   console.log(`   MCP config : ${opts.mcp}`);
+  console.log(`   Auth       : ${opts.token ? "GitHub token (--token / GITHUB_TOKEN)" : "gh CLI credentials"}`);
   console.log();
 }
 

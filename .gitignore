@@ -5,7 +5,7 @@ node_modules/
 dist/
 
 # Generated reports
-eval_report_*.html
+reports/
 
 # Environment files
 .env

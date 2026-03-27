@@ -34,4 +34,8 @@ export interface EvalOptions {
   iterations: number;
   model: string;
   mcp?: string;
+  /** GitHub Personal Access Token for Copilot authentication.
+   * When provided it is passed directly to the SDK (githubToken option),
+   * bypassing any gh CLI credentials. Falls back to GITHUB_TOKEN env var. */
+  token?: string;
 }

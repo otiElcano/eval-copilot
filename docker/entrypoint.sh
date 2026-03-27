@@ -6,19 +6,23 @@
 # Helper: Verify GitHub Copilot authentication
 # ────────────────────────────────────────────────────────────────────────────────
 check_copilot_auth() {
-  if gh copilot alias &>/dev/null; then
-    echo "✓ GitHub Copilot is authenticated"
+  if [[ -n "$GITHUB_TOKEN" ]]; then
+    echo "✓ GITHUB_TOKEN is set — token-based auth is active"
+    return 0
+  elif gh copilot alias &>/dev/null; then
+    echo "✓ GitHub Copilot is authenticated via gh CLI"
     return 0
   else
-    echo "✗ GitHub Copilot is NOT authenticated"
+    echo "✗ No authentication found"
     echo ""
-    echo "To authenticate with Copilot, run:"
+    echo "Option A — set a GitHub PAT (recommended, no login required):"
+    echo "  export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx"
+    echo ""
+    echo "Option B — log in interactively with the gh CLI:"
     echo "  gh auth login"
     echo ""
-    echo "You need a GitHub token with Copilot access. Get one at:"
+    echo "Your token needs Copilot access. Create one at:"
     echo "  https://github.com/settings/tokens"
-    echo ""
-    echo "Minimum required scopes: 'repo', 'read:org', 'workflow'"
     return 1
   fi
 }
@@ -28,16 +32,20 @@ cat <<'BANNER'
 ║                        eval-copilot                              ║
 ║            Contenedor listo  ·  bash interactivo                 ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  1) Autentícate con GitHub Copilot:                              ║
-║        gh auth login                                             ║
-║     (⚠ Token must have Copilot access)                           ║
+║  Auth (opción A, recomendada — no requiere login previo):        ║
+║    export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx                  ║
 ║                                                                  ║
-║  2) Verifica la autenticación:                                   ║
-║        check_copilot_auth                                        ║
+║  Auth (opción B — CLI interactivo):                              ║
+║    gh auth login                                                 ║
 ║                                                                  ║
-║  3) Ejecuta la herramienta:                                      ║
-║        eval-copilot -p "tu prompt" -x 3 \                        ║
-║                    --mcp /app/mcp-config.json                    ║
+║  Verifica autenticación:                                         ║
+║    check_copilot_auth                                            ║
+║                                                                  ║
+║  Ejecuta la herramienta:                                         ║
+║    eval-copilot -p "tu prompt" -x 3 \                            ║
+║                --mcp /app/mcp-config.json                        ║
+║    # o con token explícito:                                      ║
+║    eval-copilot --token "$GITHUB_TOKEN" -p "tu prompt" -x 3     ║
 ║  Reportes HTML:  /app/reports                                    ║
 ╚══════════════════════════════════════════════════════════════════╝
 BANNER
@@ -46,7 +54,7 @@ echo ""
 echo "Checking Copilot authentication..."
 if ! check_copilot_auth; then
   echo ""
-  echo "Run 'gh auth login' to authenticate, then 'check_copilot_auth' to verify."
+  echo "Set GITHUB_TOKEN or run 'gh auth login', then 'check_copilot_auth' to verify."
 fi
 echo ""
 

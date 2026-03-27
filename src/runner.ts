@@ -147,6 +147,10 @@ async function runIteration(ctx: IterationContext): Promise<IterationResult> {
         data?: {
           toolCallId?: string;
           success?: boolean;
+          /** Populated by the SDK when the tool execution failed or was denied. */
+          error?: string;
+          errorMessage?: string;
+          reason?: string;
           result?: { content?: string; detailedContent?: string };
         };
       };
@@ -161,7 +165,10 @@ async function runIteration(ctx: IterationContext): Promise<IterationResult> {
       if (raw !== undefined) {
         t.result = raw.detailedContent ?? raw.content ?? raw;
       } else if (e?.data?.success === false) {
-        t.result = "(denied)";
+        // Surface the actual error/reason from the SDK event rather than a
+        // generic "(denied)" label that masks timeouts, MCP errors, etc.
+        const errorDetail = e?.data?.error ?? e?.data?.errorMessage ?? e?.data?.reason;
+        t.result = errorDetail ? `(error: ${errorDetail})` : "(execution failed)";
       } else {
         t.result = "(no output)";
       }
@@ -268,7 +275,9 @@ async function runIteration(ctx: IterationContext): Promise<IterationResult> {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function runEval(options: EvalOptions): Promise<IterationResult[]> {
-  const client = new CopilotClient();
+  // Prefer explicit token (--token / GITHUB_TOKEN) over gh CLI auth.
+  const clientOptions = options.token ? { githubToken: options.token } : {};
+  const client = new CopilotClient(clientOptions);
   await client.start();
 
   try {
@@ -279,14 +288,16 @@ export async function runEval(options: EvalOptions): Promise<IterationResult[]> 
     } catch (err) {
       throw new Error(
         `Failed to retrieve auth status: ${(err as Error).message}\n` +
-        `Ensure you are logged in via 'gh auth login' or VS Code GitHub Copilot.`
+        `Provide a token via --token <PAT> or the GITHUB_TOKEN env var, ` +
+        `or log in first with 'gh auth login'.`
       );
     }
 
     if (!authStatus.isAuthenticated) {
       throw new Error(
         `Not authenticated with GitHub Copilot. ` +
-        `Run 'gh auth login' or sign in through VS Code and try again.`
+        `Pass a Personal Access Token via --token <PAT> or the GITHUB_TOKEN env var, ` +
+        `or run 'gh auth login' to use stored gh CLI credentials.`
       );
     }
 

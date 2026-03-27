@@ -1,6 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
-# node:22-bookworm-slim includes Node.js 22 with node:sqlite built-in support
-FROM node:22-bookworm-slim AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /build
 
@@ -15,41 +14,25 @@ COPY src/ ./src/
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim
+FROM node:22-alpine
 
 LABEL org.opencontainers.image.title="eval-copilot" \
       org.opencontainers.image.description="Run a prompt N times via GitHub Copilot SDK and generate an HTML report"
 
-# 1) Base tools needed to add external repos
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies from Alpine community repo:
+#   bash        — entrypoint uses bash (Alpine default shell is ash)
+#   github-cli  — gh CLI for optional interactive auth
+#   docker-cli  — Docker client (socket mounted from host for MCP tools)
+#   python3     — required by MCP servers; venv support is built-in on Alpine
+#   py3-pip     — pip for MCP server dependencies
+RUN apk add --no-cache \
     ca-certificates \
     curl \
-    gnupg \
-    lsb-release \
-    && rm -rf /var/lib/apt/lists/*
-
-# 2) gh CLI repo
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
-        https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list
-
-# 3) Docker CLI repo (client only — socket is mounted from host)
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-        https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
-        > /etc/apt/sources.list.d/docker.list
-
-# 4) Install gh + docker-ce-cli and Python tooling (for MCP servers)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gh \
-    docker-ce-cli \
+    bash \
+    github-cli \
+    docker-cli \
     python3 \
-    python3-venv \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+    py3-pip
 
 WORKDIR /app
 

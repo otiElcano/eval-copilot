@@ -9,7 +9,12 @@ services:
     # as the host (allows resolving host-only names like `web.dev.local`).
     # NOTE: `network_mode: "host"` works only on Linux.
     network_mode: "host"
-
+    # ── Environment ───────────────────────────────────────────────────────
+    environment:
+      # Forward a GitHub PAT from the host so no interactive login is needed.
+      # Set it on the host with: export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+      # The app also accepts --token <PAT> at the command line.
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     # ── Interactive bash session ───────────────────────────────────────────────
     stdin_open: true   # docker run -i
     tty: true          # docker run -t
