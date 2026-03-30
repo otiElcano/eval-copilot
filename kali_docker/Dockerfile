@@ -43,19 +43,10 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
         https://download.docker.com/linux/debian bookworm stable" \
         > /etc/apt/sources.list.d/docker.list
 
-# 5) Install gh + docker-ce-cli (no Python in this image)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gh docker-ce-cli \
-        # Common Kali offensive-security tools
-        nmap \
-        sqlmap \
-        nikto \
-        gobuster \
-        dirb \
-        hydra \
-        john \
-        # Lightweight Kali metapackage with top tools (adds commonly used tools)
-        kali-tools-top10 \
+# 5) Install gh + docker-ce-cli and the full Kali 'large' metapackage
+# Use apt to install the full Kali toolset: kali-linux-large
+RUN apt-get update \
+ && apt-get -y install --no-install-recommends gh docker-ce-cli kali-linux-large \
  && rm -rf /var/lib/apt/lists/*
 
 # Reset frontend
