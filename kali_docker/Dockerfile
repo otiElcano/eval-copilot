@@ -11,7 +11,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # ── Runtime stage — Kali Linux ────────────────────────────────────────────────
-FROM kalilinux/kali-rolling
+FROM kalilinux/kali-last-release
 
 LABEL org.opencontainers.image.title="eval-copilot-kali" \
       org.opencontainers.image.description="eval-copilot running on Kali Linux"
