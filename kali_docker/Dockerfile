@@ -51,7 +51,6 @@ WORKDIR /app
 COPY --from=builder /build/dist         ./dist
 COPY --from=builder /build/node_modules ./node_modules
 COPY package.json ./
-COPY kali_docker/mcp-config.json ./mcp-config.json
 COPY kali_docker/entrypoint.sh   /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
