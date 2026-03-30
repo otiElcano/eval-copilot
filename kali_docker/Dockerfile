@@ -21,6 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg lsb-release \
  && rm -rf /var/lib/apt/lists/*
 
+# Set non-interactive frontend for apt to avoid prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+
 # 2) Node.js 22 via NodeSource (official Debian-compatible, same ABI as builder)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
@@ -42,8 +45,21 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
 
 # 5) Install gh + docker-ce-cli (no Python in this image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gh docker-ce-cli \
+        gh docker-ce-cli \
+        # Common Kali offensive-security tools
+        nmap \
+        sqlmap \
+        nikto \
+        gobuster \
+        dirb \
+        hydra \
+        john \
+        # Lightweight Kali metapackage with top tools (adds commonly used tools)
+        kali-tools-top10 \
  && rm -rf /var/lib/apt/lists/*
+
+# Reset frontend
+ENV DEBIAN_FRONTEND=dialog
 
 WORKDIR /app
 
