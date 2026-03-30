@@ -1,0 +1,35 @@
+services:
+  eval-copilot-kali:
+    build:
+      context: ..
+      dockerfile: kali_docker/Dockerfile
+    image: eval-copilot-kali:latest
+
+    # Host networking so the container sees the same interfaces/hostnames as the host
+    network_mode: "host"
+
+    environment:
+      # Forward a GitHub PAT from the host — no interactive login needed.
+      # Set on host: export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+
+    stdin_open: true   # docker run -i
+    tty: true          # docker run -t
+
+    volumes:
+      # gh CLI credentials — persisted across container restarts
+      - gh-config-kali:/root/.config/gh
+      # Docker socket — needed if MCP tools invoke docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same hostname resolution as the host
+      - /etc/hosts:/etc/hosts:ro
+      # Kali MCP server source (read-only)
+      - /home/kali_rdp/Escritorio/Servidores MCP/MCP-Kali-Server:/opt/mcp/kali:ro
+      # HTML reports written back to the host
+      - ../reports:/app/reports
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  gh-config-kali:
