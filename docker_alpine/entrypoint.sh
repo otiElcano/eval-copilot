@@ -59,27 +59,17 @@ fi
 echo ""
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Ensure a Python venv for MCP tools is available at /opt/mcp_venv
-# This venv is created inside the container (not under the read-only mounted code).
-# If the host MCP code provides a requirements.txt, install it; otherwise install 'requests'.
+# Install MCP Python dependencies into system Python
 # ────────────────────────────────────────────────────────────────────────────────
 if command -v python3 >/dev/null 2>&1; then
-  if [[ ! -d "/opt/mcp_venv" ]]; then
-    echo "[eval-copilot] Creating MCP virtualenv at /opt/mcp_venv..."
-    python3 -m venv /opt/mcp_venv || { echo "[eval-copilot] venv creation failed"; }
-    /opt/mcp_venv/bin/python -m pip install --upgrade pip setuptools wheel || true
-    if [[ -f "/opt/mcp/kali/requirements.txt" ]]; then
-      echo "[eval-copilot] Installing MCP requirements from /opt/mcp/kali/requirements.txt"
-      /opt/mcp_venv/bin/pip install --no-cache-dir -r /opt/mcp/kali/requirements.txt || true
-    else
-      echo "[eval-copilot] Installing 'requests' into MCP venv"
-      /opt/mcp_venv/bin/pip install --no-cache-dir requests || true
-    fi
+  if [[ -f "/opt/mcp/kali/requirements.txt" ]]; then
+    echo "[eval-copilot] Installing MCP requirements from /opt/mcp/kali/requirements.txt"
+    pip install --no-cache-dir -r /opt/mcp/kali/requirements.txt || true
   else
-    echo "[eval-copilot] MCP venv already exists at /opt/mcp_venv"
+    echo "[eval-copilot] /opt/mcp/kali/requirements.txt not found, skipping pip install"
   fi
 else
-  echo "[eval-copilot] python3 not available in container; MCP venv cannot be created"
+  echo "[eval-copilot] python3 not available in container; skipping pip install"
 fi
 
 exec /bin/bash

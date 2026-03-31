@@ -58,7 +58,7 @@ WORKDIR /app
 COPY --from=builder /build/dist         ./dist
 COPY --from=builder /build/node_modules ./node_modules
 COPY package.json ./
-COPY kali_docker/entrypoint.sh   /entrypoint.sh
+COPY docker_kali/entrypoint.sh   /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Install eval-copilot globally so `eval-copilot` is on $PATH

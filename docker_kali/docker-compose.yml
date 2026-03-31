@@ -2,7 +2,7 @@ services:
   eval-copilot-kali:
     build:
       context: ..
-      dockerfile: kali_docker/Dockerfile
+      dockerfile: docker_kali/Dockerfile
     image: eval-copilot-kali:latest
 
     # Host networking so the container sees the same interfaces/hostnames as the host
@@ -23,8 +23,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Same hostname resolution as the host
       - /etc/hosts:/etc/hosts:ro
-      # Kali MCP server source (read-only)
-      - /home/kali_rdp/Escritorio/Servidores MCP/MCP-Kali-Server:/opt/mcp/kali:ro
       # HTML reports written back to the host
       - ../reports:/app/reports
 

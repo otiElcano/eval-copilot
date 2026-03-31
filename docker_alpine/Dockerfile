@@ -32,9 +32,17 @@ RUN apk add --no-cache \
     github-cli \
     docker-cli \
     python3 \
-    py3-pip
+    py3-pip \
+ # Remove Alpine's "externally managed" marker so pip works without --break-system-packages
+ && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
 
 WORKDIR /app
+
+# Force IPv4-first DNS resolution — musl libc (Alpine) defaults to IPv6 first,
+# which can cause silent connection stalls when the upstream network does not
+# fully support IPv6.  This prevents the Copilot SDK streaming connection from
+# hanging indefinitely after MCP tool calls complete.
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 
 # Copy compiled app and production dependencies
 COPY --from=builder /build/dist ./dist
@@ -42,9 +50,9 @@ COPY --from=builder /build/node_modules ./node_modules
 COPY package.json ./
 
 # MCP config adapted for Docker (overridable via volume mount)
-COPY docker/mcp-config.json ./mcp-config.json
+COPY docker_alpine/mcp-config.json ./mcp-config.json
 
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker_alpine/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Install eval-copilot globally (uses "bin" entry from package.json)

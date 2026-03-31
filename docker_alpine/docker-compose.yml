@@ -2,7 +2,7 @@ services:
   eval-copilot:
     build:
       context: ..           # project root (where package.json lives)
-      dockerfile: docker/Dockerfile
+      dockerfile: docker_alpine/Dockerfile
     image: eval-copilot:latest
 
     # Use host networking so the container sees the same network/interfaces
@@ -35,7 +35,6 @@ services:
       # Kali MCP server — mounted read-only at /opt/mcp/kali inside the container
       # The path must match the `command` / `args` in docker/mcp-config.json
       - /home/kali_rdp/Escritorio/Servidores MCP/MCP-Kali-Server:/opt/mcp/kali:ro
-
       # Output directory — HTML reports are written here on the host
       - ../reports:/app/reports
 
