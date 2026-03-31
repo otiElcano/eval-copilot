@@ -76,12 +76,15 @@ eval-copilot --help
 eval-copilot [options]
 
 Options:
-  -p, --prompt <text>        Prompt text to evaluate (required)
-  -x, --iterations <number>  Number of times to run the prompt (default: 3)
-  -m, --model <name>         Model to use (default: "gpt-4.1")
-  --mcp <path>               Path to an MCP server config JSON file
-  -V, --version              Print version
-  -h, --help                 Show help
+  -p, --prompt <text>               Prompt text to evaluate (required)
+  -x, --iterations <number>         Number of times to run the prompt (default: 3)
+  -m, --model <name>                Model to use (default: "gpt-4.1")
+  --mcp <path>                      Path to an MCP server config JSON file
+  --token <tok>                     GitHub PAT with Copilot access (bypasses gh CLI auth)
+  --iteration-timeout <seconds>     Max seconds to wait per iteration (default: 1200)
+  --inactivity-timeout <seconds>    Max seconds of silence before iteration is declared stuck (default: 120, 0 = disabled)
+  -V, --version                     Print version
+  -h, --help                        Show help
 ```
 
 ---
@@ -255,12 +258,39 @@ npm run dev -- -p "Hello world" -x 2
 
 ```
 src/
-├── index.ts    — CLI entry point (commander)
-├── runner.ts   — Core eval loop (auth, model validation, iterations)
-├── mcp.ts      — MCP config file parser and validator
-├── report.ts   — HTML report generator
-└── types.ts    — Shared TypeScript types
+├── index.ts                     — CLI entry point & composition root
+├── runner.ts                    — Eval loop (auth, model, iterations)
+├── report.ts                    — HTML report builder
+├── mcp.ts                       — MCP config parser / validator
+├── SessionEventCollector.ts     — SDK event listener lifecycle
+├── types.ts                     — Shared TypeScript types
+├── interfaces/
+│   ├── ICopilotClientAdapter.ts   — SDK client contract
+│   ├── IProgressReporter.ts       — Spinner / terminal output contract
+│   ├── IPromptTransformer.ts      — Prompt wrapping strategy contract
+│   └── IReportWriter.ts           — Report persistence contract
+├── adapters/
+│   ├── SdkCopilotClientAdapter.ts — Wraps @github/copilot-sdk
+│   ├── OraProgressReporter.ts     — Wraps ora spinner
+│   └── FileSystemReportWriter.ts  — Writes report to disk
+├── prompts/
+│   ├── AuditPromptTransformer.ts  — Security-audit wrapper (default)
+│   └── IdentityPromptTransformer.ts — No-op passthrough
+└── utils/
+    └── stats.ts                   — computeEvalStats() shared helper
 ```
+
+### Architecture — SOLID principles
+
+The codebase follows SOLID throughout:
+
+| Principle | Implementation |
+|---|---|
+| **S** Single Responsibility | `SessionEventCollector` owns only event wiring; `stats.ts` owns only stat computation; each adapter owns one external dependency |
+| **O** Open / Closed | New prompt modes implement `IPromptTransformer`; new output targets implement `IReportWriter` — no existing code changes |
+| **L** Liskov Substitution | Any `IPromptTransformer` or `IReportWriter` is interchangeable without affecting callers |
+| **I** Interface Segregation | `BaseIterationResult` (generic) / `AuditIterationResult` (security); each interface exposes only what its consumer needs |
+| **D** Dependency Inversion | `runEval` and `generateReport` depend on interfaces; concrete classes are constructed only in `src/index.ts` (composition root) |
 
 ---
 
@@ -276,7 +306,19 @@ The tool will print the full list of models available on your account. Use one o
 Check that the path passed to `--mcp` exists and is readable. The file must be valid JSON with a `"servers"` top-level key.
 
 **One iteration fails but others succeed**
-This is expected behaviour — the tool catches per-iteration errors, records them in the report, and continues. Check the error card in the HTML report for the full error message.
+Per-iteration errors are caught, recorded in the report, and the loop continues. The `CopilotClient` auth token can expire after the first session is destroyed — the runner automatically cycles `stop() → start()` between iterations to refresh it. If you keep seeing auth failures across all iterations, run `gh auth login` to refresh your credentials.
+
+**`Authorization error, you may need to run /login`**
+This is the symptom of a stale SDK auth token. It is handled automatically by the inter-iteration client cycle. If it still appears on the *first* iteration, run `gh auth login`.
+
+**`Inactivity timeout after Nms — no session activity`**
+The session produced no events (tool calls, reasoning deltas, usage) for longer than `--inactivity-timeout` seconds. This usually means the underlying CLI process stalled. The runner will record the error, continue with the remaining iterations, and include the failure in the HTML report. If this happens frequently, increase the inactivity timeout:
+
+```bash
+node dist/index.js -p "..." --inactivity-timeout 300
+```
+
+Set `--inactivity-timeout 0` to disable inactivity detection entirely and rely only on `--iteration-timeout`.
 
 ---
 
