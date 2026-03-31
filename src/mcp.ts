@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { MCPLocalServerConfig, MCPRemoteServerConfig, MCPServerConfig } from "@github/copilot-sdk";
 
-// ── Internal types ────────────────────────────────────────────────────────────
 
 interface MCPServerEntry {
   [name: string]: MCPLocalServerConfig | MCPRemoteServerConfig;
@@ -11,8 +10,6 @@ interface MCPServerEntry {
 interface MCPConfig {
   servers: MCPServerEntry;
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 export interface ParsedMCPConfig {
   mcpServers: Record<string, MCPServerConfig>;
@@ -54,7 +51,6 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
   const mcpServers: Record<string, MCPServerConfig> = {};
 
   for (const [name, server] of Object.entries(config.servers)) {
-    // Validate required fields depending on type
     const s = server as unknown as Record<string, unknown>;
     const serverType = (s["type"] as string | undefined) ?? "local";
 
@@ -71,8 +67,7 @@ export async function parseMCPConfig(filePath: string): Promise<ParsedMCPConfig>
       }
     }
 
-    // Normalize the tools field: SDK requires string[], not a bare "*" string.
-    // An absent tools field defaults to ["*"] (all tools).
+    // Normalize tools: SDK requires string[], "*" or absent defaults to ["*"].
     const normalizedServer = { ...s } as Record<string, unknown>;
     if (normalizedServer["tools"] === "*" || normalizedServer["tools"] === undefined) {
       normalizedServer["tools"] = ["*"];

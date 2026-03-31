@@ -3,8 +3,12 @@ import { Command } from "commander";
 import { runEval } from "./runner.js";
 import { generateReport } from "./report.js";
 import type { EvalOptions } from "./types.js";
+import { SdkCopilotClientAdapter } from "./adapters/SdkCopilotClientAdapter.js";
+import { OraProgressReporter } from "./adapters/OraProgressReporter.js";
+import { AuditPromptTransformer } from "./prompts/AuditPromptTransformer.js";
+import { FileSystemReportWriter } from "./adapters/FileSystemReportWriter.js";
+import { computeEvalStats } from "./utils/stats.js";
 
-// ── CLI definition ────────────────────────────────────────────────────────────
 
 const program = new Command();
 
@@ -25,11 +29,20 @@ program
   .option(
     "--token <tok>",
     "GitHub PAT with Copilot access (bypasses gh CLI auth). Falls back to GITHUB_TOKEN env var."
+  )
+  .option(
+    "--iteration-timeout <seconds>",
+    "Max seconds to wait per iteration (covers all MCP/tool calls). Default: 1200 (20 min).",
+    "1200"
+  )
+  .option(
+    "--inactivity-timeout <seconds>",
+    "Max seconds of silence before an iteration is considered stuck. Resets on every session event (tool call, reasoning delta, etc.). Default: 120. Set to 0 to disable.",
+    "120"
   );
 
 program.parse(process.argv);
 
-// ── Options parsing & validation ──────────────────────────────────────────────
 
 const raw = program.opts<{
   prompt: string;
@@ -37,6 +50,8 @@ const raw = program.opts<{
   model: string;
   mcp?: string;
   token?: string;
+  iterationTimeout: string;
+  inactivityTimeout: string;
 }>();
 
 const parsedIterations = parseInt(raw.iterations, 10);
@@ -45,18 +60,29 @@ if (isNaN(parsedIterations)) {
   process.exit(1);
 }
 
-// Resolve token: --token flag > GITHUB_TOKEN env var > undefined (gh CLI fallback)
 const resolvedToken = raw.token ?? process.env["GITHUB_TOKEN"];
 
-const options: EvalOptions = {
-  prompt:     raw.prompt,
-  iterations: Math.max(1, parsedIterations),
-  model:      raw.model,
-  mcp:        raw.mcp,
-  token:      resolvedToken,
-};
+const parsedTimeout = parseInt(raw.iterationTimeout, 10);
+if (isNaN(parsedTimeout) || parsedTimeout < 1) {
+  console.error(`[eval-copilot] Error: --iteration-timeout must be a positive integer in seconds, got "${raw.iterationTimeout}"`);
+  process.exit(1);
+}
 
-// ── Startup banner ────────────────────────────────────────────────────────────
+const parsedInactivityTimeout = parseInt(raw.inactivityTimeout, 10);
+if (isNaN(parsedInactivityTimeout) || parsedInactivityTimeout < 0) {
+  console.error(`[eval-copilot] Error: --inactivity-timeout must be a non-negative integer in seconds, got "${raw.inactivityTimeout}"`);
+  process.exit(1);
+}
+
+const options: EvalOptions = {
+  prompt:               raw.prompt,
+  iterations:           Math.max(1, parsedIterations),
+  model:                raw.model,
+  mcp:                  raw.mcp,
+  token:                resolvedToken,
+  iterationTimeoutMs:   parsedTimeout * 1000,
+  inactivityTimeoutMs:  parsedInactivityTimeout * 1000,
+};
 
 function printBanner(opts: EvalOptions): void {
   const truncatedPrompt =
@@ -68,38 +94,33 @@ function printBanner(opts: EvalOptions): void {
   console.log(`   Iterations : ${opts.iterations}`);
   if (opts.mcp)   console.log(`   MCP config : ${opts.mcp}`);
   console.log(`   Auth       : ${opts.token ? "GitHub token (--token / GITHUB_TOKEN)" : "gh CLI credentials"}`);
+  console.log(`   Iter. timeout    : ${(opts.iterationTimeoutMs ?? 1_200_000) / 1000}s`);
+  const inactSecs = (opts.inactivityTimeoutMs ?? 120_000) / 1000;
+  console.log(`   Inact. timeout   : ${inactSecs > 0 ? `${inactSecs}s` : "disabled"}`);
   console.log();
 }
-
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   printBanner(options);
 
+  const clientAdapter     = new SdkCopilotClientAdapter(options.token);
+  const progressReporter  = new OraProgressReporter();
+  const promptTransformer = new AuditPromptTransformer();
+  const reportWriter      = new FileSystemReportWriter();
+
   let results: Awaited<ReturnType<typeof runEval>>;
   try {
-    results = await runEval(options);
+    results = await runEval(options, clientAdapter, progressReporter, promptTransformer);
   } catch (err) {
     console.error(`\n[eval-copilot] Fatal error: ${(err as Error).message ?? String(err)}`);
     process.exit(1);
   }
 
-  // ── Terminal summary ──────────────────────────────────────────────────────
-  const successes = results.filter((r) => !r.error).length;
-  const errors    = results.length - successes;
-  const avgLatency =
-    successes > 0
-      ? Math.round(
-          results
-            .filter((r) => !r.error)
-            .reduce((sum, r) => sum + r.durationMs, 0) / successes
-        )
-      : 0;
-
-  console.log();
-  const vulnFound    = results.filter((r) => r.foundVulnerability).length;
+  const { successes, errors, avgLatency } = computeEvalStats(results);
+  const vulnFound     = results.filter((r) => r.foundVulnerability).length;
   const vulnExploited = results.filter((r) => r.exploitedVulnerability).length;
 
+  console.log();
   console.log(`── Summary ─────────────────────────────────`);
   console.log(`   Total iterations : ${results.length}`);
   console.log(`   Successful       : ${successes}`);
@@ -109,10 +130,9 @@ async function main(): Promise<void> {
   console.log(`   VULN_EXPLOITED   : ${vulnExploited}/${results.length} iterations`);
   console.log();
 
-  // ── HTML report ───────────────────────────────────────────────────────────
   let reportFile: string;
   try {
-    reportFile = await generateReport(results, options.prompt, options.model);
+    reportFile = await generateReport(results, options.prompt, options.model, reportWriter);
   } catch (err) {
     console.error(`[eval-copilot] Failed to write report: ${(err as Error).message ?? String(err)}`);
     process.exit(1);

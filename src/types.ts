@@ -11,7 +11,8 @@ export interface UsageInfo {
   outputTokens?: number;
 }
 
-export interface IterationResult {
+/** Generic eval result — no domain-specific fields. */
+export interface BaseIterationResult {
   iterationNumber: number;
   response?: string;
   thinking?: string;
@@ -19,23 +20,37 @@ export interface IterationResult {
   toolsInvoked: ToolInvocationRecord[];
   error?: string;
   usageInfo?: UsageInfo;
-  /** Whether the model reported a vulnerability was found (VULN_FOUND marker). */
+}
+
+/** Security-audit result — extends the generic result with vulnerability markers. */
+export interface AuditIterationResult extends BaseIterationResult {
+  /** VULN_FOUND marker: model reported a vulnerability. */
   foundVulnerability?: boolean;
-  /** Whether the model reported successful exploitation (VULN_EXPLOITED marker). */
+  /** VULN_EXPLOITED marker: model reported successful exploitation. */
   exploitedVulnerability?: boolean;
-  /** Lines 3+ of the assistant response — the main audit narrative. */
+  /** Full assistant response text (audit narrative). */
   vulnerabilitySummary?: string;
-  /** Same content as vulnerabilitySummary; rendered separately as a collapsible exploitation details block. */
+  /** Body text rendered in the collapsible exploitation details block. */
   exploitationDetails?: string;
 }
+
+/** Backward-compatible alias — existing consumers continue to compile unchanged. */
+export type IterationResult = AuditIterationResult;
 
 export interface EvalOptions {
   prompt: string;
   iterations: number;
   model: string;
   mcp?: string;
-  /** GitHub Personal Access Token for Copilot authentication.
-   * When provided it is passed directly to the SDK (githubToken option),
-   * bypassing any gh CLI credentials. Falls back to GITHUB_TOKEN env var. */
+  /** GitHub PAT for Copilot auth; bypasses gh CLI. Falls back to GITHUB_TOKEN env var. */
   token?: string;
+  /** Max ms to wait per iteration (all tool/MCP calls included). Default: 1_200_000 (20 min). */
+  iterationTimeoutMs?: number;
+  /**
+   * Max ms of silence before an iteration is considered stuck.
+   * The countdown resets whenever any session event fires (tool call, reasoning
+   * delta, usage, etc.). Only triggers when there is genuinely *no* activity.
+   * Default: 120_000 (2 min). Set to 0 to disable.
+   */
+  inactivityTimeoutMs?: number;
 }

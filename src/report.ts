@@ -1,8 +1,7 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { IterationResult } from "./types.js";
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
+import type { IReportWriter } from "./interfaces/IReportWriter.js";
+import { FileSystemReportWriter } from "./adapters/FileSystemReportWriter.js";
+import { computeEvalStats } from "./utils/stats.js";
 
 function escapeHtml(text: string): string {
   return text
@@ -13,9 +12,7 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Convert Markdown-like fenced code blocks and inline backticks to HTML. */
 function formatResponseToHtml(text: string): string {
-  // 1. Fenced code blocks: ```lang\n...\n```
   let html = text.replace(
     /```([^\n]*)\n([\s\S]*?)```/g,
     (_match, lang: string, code: string) => {
@@ -24,13 +21,10 @@ function formatResponseToHtml(text: string): string {
     }
   );
 
-  // 2. Inline backtick spans: `code`
   html = html.replace(/`([^`\n]+)`/g, (_match, code: string) => {
     return `<code>${escapeHtml(code)}</code>`;
   });
 
-  // 3. Convert remaining newlines to <br> outside pre tags
-  // Split on <pre> blocks to preserve them verbatim
   const parts = html.split(/(<pre>[\s\S]*?<\/pre>)/);
   html = parts
     .map((part, idx) => {
@@ -44,7 +38,6 @@ function formatResponseToHtml(text: string): string {
   return `<p>${html}</p>`;
 }
 
-// ── CSS ──────────────────────────────────────────────────────────────────────
 
 function buildCSS(): string {
   return `
@@ -486,31 +479,17 @@ function buildCSS(): string {
   `.trim();
 }
 
-// ── HTML builder ─────────────────────────────────────────────────────────────
-
 function buildHTML(
   results: IterationResult[],
   prompt: string,
   model: string,
   timestamp: string
 ): string {
-  const total = results.length;
-  const successes = results.filter((r) => !r.error).length;
-  const errors = total - successes;
-  const vulnFound    = results.filter((r) => r.foundVulnerability).length;
+  const { total, successes, errors, avgLatency, minLatency, maxLatency } = computeEvalStats(results);
+  const vulnFound     = results.filter((r) => r.foundVulnerability).length;
   const vulnExploited = results.filter((r) => r.exploitedVulnerability).length;
-  const avgLatency =
-    successes > 0
-      ? Math.round(
-          results.filter((r) => !r.error).reduce((sum, r) => sum + r.durationMs, 0) / successes
-        )
-      : 0;
 
   const css = buildCSS();
-
-  const allDurations = results.map((r) => r.durationMs);
-  const minLatency = allDurations.length > 0 ? Math.min(...allDurations) : 0;
-  const maxLatency = allDurations.length > 0 ? Math.max(...allDurations) : 0;
 
   const summaryBar = `
   <div class="summary">
@@ -557,7 +536,6 @@ function buildHTML(
         : `<span class="badge badge-success">✓ Success</span>`;
       const isFirstIteration = idx === 0;
 
-      // Vuln badges
       const foundLabel    = result.foundVulnerability    ? "✅ VULN_FOUND"    : "❌ VULN_FOUND";
       const exploitLabel  = result.exploitedVulnerability ? "✅ VULN_EXPLOITED" : "❌ VULN_EXPLOITED";
       const foundClass    = result.foundVulnerability    ? "badge badge-vuln-found-true"    : "badge badge-vuln-found-false";
@@ -568,13 +546,11 @@ function buildHTML(
         <span class="${escapeHtml(exploitClass)}">${escapeHtml(exploitLabel)}</span>
       </div>` : "";
 
-      // Body: use parsed vulnerabilitySummary when available, fall back to full response
       const summaryText = result.vulnerabilitySummary ?? result.response ?? "";
       const bodyContent = isError
         ? `<div class="error-message">${escapeHtml(result.error ?? "Unknown error")}</div>`
         : formatResponseToHtml(summaryText);
 
-      // Exploitation details collapsible
       const exploitBlock =
         !isError && result.exploitationDetails
           ? `<details class="exploit-section">
@@ -630,7 +606,6 @@ function buildHTML(
           ? `<div class="usage-bar">Tokens: <span>${(result.usageInfo.inputTokens ?? 0).toLocaleString()} in</span> / <span>${(result.usageInfo.outputTokens ?? 0).toLocaleString()} out</span></div>`
           : "";
 
-      // Latency bar: percentage relative to the slowest iteration
       const pct = maxLatency > 0 ? Math.round((result.durationMs / maxLatency) * 100) : 100;
       const isSlowest = result.durationMs === maxLatency && total > 1;
       const latencyBar = `
@@ -642,7 +617,6 @@ function buildHTML(
           <div class="latency-bar-value">⏱ ${result.durationMs.toLocaleString()} ms${isSlowest ? "  (slowest)" : ""}</div>
         </div>`;
 
-      // Short text preview for collapsed summary row
       const previewText = isError
         ? `Error: ${result.error ?? "Unknown error"}`
         : (result.vulnerabilitySummary ?? result.response ?? "").slice(0, 120).replace(/\n/g, " ");
@@ -712,20 +686,23 @@ function buildHTML(
 </html>`;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
 
+/**
+ * Generates an HTML report from iteration results.
+ *
+ * @param writer - Optional IReportWriter. Defaults to FileSystemReportWriter (writes to cwd).
+ */
 export async function generateReport(
   results: IterationResult[],
   prompt: string,
-  model: string
+  model: string,
+  writer?: IReportWriter,
 ): Promise<string> {
   const now = new Date();
   const timestamp = now.toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-  const filename = `eval_report_${timestamp}.html`;
-  const outputPath = join(process.cwd(), filename);
 
   const html = buildHTML(results, prompt, model, now.toISOString());
-  await writeFile(outputPath, html, "utf-8");
 
-  return filename;
+  const reportWriter = writer ?? new FileSystemReportWriter();
+  return reportWriter.write(html, timestamp);
 }
