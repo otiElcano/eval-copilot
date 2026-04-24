@@ -293,6 +293,10 @@ function buildCSS(): string {
       border-bottom: 1px dashed #21262d;
     }
     .tool-item:last-child { border-bottom: none; }
+    .tool-item-empty {
+      color: #8b949e;
+      font-style: italic;
+    }
     .tool-item-header {
       display: flex;
       justify-content: space-between;
@@ -559,22 +563,20 @@ function buildHTML(
       </details>`
           : "";
 
-      const toolsFooter =
-        result.toolsInvoked.length > 0
-          ? `
-          <div class="card-footer">
-            <div class="tools-title">Tools invoked (${result.toolsInvoked.length})</div>
-            ${result.toolsInvoked
-              .map((t) => {
-                const argsJson = t.args !== undefined
-                  ? escapeHtml(JSON.stringify(t.args, null, 2))
-                  : "(none)";
-                const resultJson = t.result === undefined
-                  ? "(pending)"
-                  : typeof t.result === "string"
-                    ? escapeHtml(t.result)
-                    : escapeHtml(JSON.stringify(t.result, null, 2));
-                return `<div class="tool-item">
+      const toolsFooterTitle = isError
+        ? `Tools invoked until error (${result.toolsInvoked.length})`
+        : `Tools invoked (${result.toolsInvoked.length})`;
+      const toolsFooterItems = result.toolsInvoked
+        .map((t) => {
+          const argsJson = t.args !== undefined
+            ? escapeHtml(JSON.stringify(t.args, null, 2))
+            : "(none)";
+          const resultJson = t.result === undefined
+            ? "(pending)"
+            : typeof t.result === "string"
+              ? escapeHtml(t.result)
+              : escapeHtml(JSON.stringify(t.result, null, 2));
+          return `<div class="tool-item">
               <div class="tool-item-header">
                 <span class="tool-name">${escapeHtml(t.toolName)}</span>
                 <span class="tool-duration">${t.durationMs.toLocaleString()} ms</span>
@@ -588,8 +590,14 @@ function buildHTML(
                 <pre class="tool-json">${resultJson}</pre>
               </details>
             </div>`;
-              })
-              .join("\n            ")}
+        })
+        .join("\n            ");
+      const toolsFooter =
+        isError || result.toolsInvoked.length > 0
+          ? `
+          <div class="card-footer">
+            <div class="tools-title">${escapeHtml(toolsFooterTitle)}</div>
+            ${toolsFooterItems || `<div class="tool-item tool-item-empty">${escapeHtml(isError ? "No tools were invoked before the failure." : "No tools invoked.")}</div>`}
           </div>`
           : "";
 

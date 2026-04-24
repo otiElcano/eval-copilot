@@ -1,4 +1,5 @@
-import { CopilotClient, approveAll } from "@github/copilot-sdk";
+import { CopilotClient } from "@github/copilot-sdk";
+import type { PermissionRequest, PermissionRequestResult } from "@github/copilot-sdk";
 import type {
   ICopilotClientAdapter,
   ISession,
@@ -13,10 +14,32 @@ import type {
  */
 export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
   private readonly client: CopilotClient;
+  private readonly traceEvents: boolean;
 
-  constructor(token?: string) {
+  constructor(token?: string, traceEvents = false) {
     const opts = token ? { githubToken: token } : {};
     this.client = new CopilotClient(opts);
+    this.traceEvents = traceEvents;
+  }
+
+  private async handlePermissionRequest(
+    request: PermissionRequest,
+    invocation: { sessionId: string },
+  ): Promise<PermissionRequestResult> {
+    const decision: PermissionRequestResult = { kind: "approved" };
+
+    if (this.traceEvents) {
+      const command = typeof request["fullCommandText"] === "string" ? request["fullCommandText"] : undefined;
+      const toolName = typeof request["toolName"] === "string" ? request["toolName"] : undefined;
+      console.error(
+        `[trace permission] ${new Date().toISOString()} ` +
+        `kind=${request.kind} tool=${toolName ?? ""} toolCallId=${request.toolCallId ?? ""} ` +
+        `session=${invocation.sessionId} decision=${decision.kind}` +
+        `${command ? ` command=${JSON.stringify(command)}` : ""}`
+      );
+    }
+
+    return decision;
   }
 
   async start(): Promise<void> {
@@ -42,19 +65,26 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
     const session = await this.client.createSession({
       ...config,
       // SDK-specific concerns confined to the adapter (DIP)
-      onPermissionRequest: approveAll,
+      onPermissionRequest: (request, invocation) => this.handlePermissionRequest(request, invocation),
       workingDirectory:    process.cwd(),
     });
 
     // The SDK session uses a string-overloaded `on()` that TypeScript cannot
     // resolve in generic contexts. We normalise it here to the ISession shape.
-    type LooseSession = { on(event: string, handler: (e: unknown) => void): () => void };
+    type LooseSession = {
+      on(event: string, handler: (e: unknown) => void): () => void;
+      on(handler: (e: unknown) => void): () => void;
+    };
     const loose = session as unknown as LooseSession;
 
     return {
-      on: (event, handler) => loose.on(event, handler),
+      on: (eventOrHandler: string | ((e: unknown) => void), handler?: (e: unknown) => void) =>
+        typeof eventOrHandler === "string"
+          ? loose.on(eventOrHandler, handler ?? (() => { /* noop */ }))
+          : loose.on(eventOrHandler),
       sendAndWait: (payload, timeoutMs) =>
         session.sendAndWait(payload, timeoutMs),
+      abort: () => session.abort(),
       destroy: () => session.destroy(),
     };
   }

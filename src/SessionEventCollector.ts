@@ -1,6 +1,20 @@
 import type { ISession } from "./interfaces/ICopilotClientAdapter.js";
 import type { ToolInvocationRecord, UsageInfo } from "./types.js";
 
+function formatErrorDetail(error: unknown): string {
+  if (typeof error === "string") return error;
+
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export interface CollectedSessionData {
   toolsInvoked: ToolInvocationRecord[];
   thinking: string | undefined;
@@ -68,7 +82,7 @@ export class SessionEventCollector {
           t.result = raw.detailedContent ?? raw.content ?? raw;
         } else if (e?.data?.success === false) {
           const errorDetail = e?.data?.error ?? e?.data?.errorMessage ?? e?.data?.reason;
-          t.result = errorDetail ? `(error: ${errorDetail})` : "(execution failed)";
+          t.result = errorDetail ? `(error: ${formatErrorDetail(errorDetail)})` : "(execution failed)";
         } else {
           t.result = "(no output)";
         }
@@ -111,6 +125,25 @@ export class SessionEventCollector {
   detach(): void {
     for (const unsub of this.unsubscribers) unsub();
     this.unsubscribers = [];
+  }
+
+  /** Marks all currently pending tools as timed out and returns their records. */
+  markPendingToolsAsTimedOut(timeoutMessage: string): ToolInvocationRecord[] {
+    const pendingRecords: ToolInvocationRecord[] = [];
+
+    for (const [toolCallId, idx] of this.toolCallIdToIndex.entries()) {
+      const record = this.toolsInvoked[idx];
+      const startTime = this.toolStartTimes.get(toolCallId);
+
+      record.result = `(error: ${formatErrorDetail(timeoutMessage)})`;
+      record.durationMs = startTime !== undefined ? Date.now() - startTime : record.durationMs;
+      pendingRecords.push(record);
+
+      this.toolCallIdToIndex.delete(toolCallId);
+      this.toolStartTimes.delete(toolCallId);
+    }
+
+    return pendingRecords;
   }
 
   /** Merges accumulated reasoning deltas and returns all collected data. */

@@ -4,10 +4,13 @@ import type { SessionConfig } from "@github/copilot-sdk";
 export interface ISession {
   /** Register a named event listener; returns an unsubscribe function. */
   on(event: string, handler: (e: unknown) => void): () => void;
+  /** Register a wildcard event listener for all session events. */
+  on(handler: (e: unknown) => void): () => void;
   sendAndWait(
     payload: { prompt: string },
     timeoutMs?: number
   ): Promise<unknown>;
+  abort(): Promise<void>;
   destroy(): Promise<void>;
 }
 

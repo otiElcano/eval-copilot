@@ -36,7 +36,7 @@ services:
       # The path must match the `command` / `args` in docker/mcp-config.json
       - /home/kali_rdp/Escritorio/Servidores MCP/MCP-Kali-Server:/opt/mcp/kali:ro
       # Output directory — HTML reports are written here on the host
-      - ../reports:/app/reports
+      - ../reports/alpine:/app/reports
 
     # ── Extra hosts ────────────────────────────────────────────────────────────
     # Allows the kali_mcp Python bridge to reach the Kali API server running on the host

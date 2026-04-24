@@ -24,7 +24,7 @@ services:
       # Same hostname resolution as the host
       - /etc/hosts:/etc/hosts:ro
       # HTML reports written back to the host
-      - ../reports:/app/reports
+      - ../reports/kali:/app/reports
 
     extra_hosts:
       - "host.docker.internal:host-gateway"

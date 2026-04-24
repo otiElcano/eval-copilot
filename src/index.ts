@@ -5,7 +5,7 @@ import { generateReport } from "./report.js";
 import type { EvalOptions } from "./types.js";
 import { SdkCopilotClientAdapter } from "./adapters/SdkCopilotClientAdapter.js";
 import { OraProgressReporter } from "./adapters/OraProgressReporter.js";
-import { AuditPromptTransformer } from "./prompts/AuditPromptTransformer.js";
+import { AuditPromptTransformer, loadSystemPromptFromPromptsFolder } from "./prompts/AuditPromptTransformer.js";
 import { FileSystemReportWriter } from "./adapters/FileSystemReportWriter.js";
 import { computeEvalStats } from "./utils/stats.js";
 
@@ -39,6 +39,14 @@ program
     "--inactivity-timeout <seconds>",
     "Max seconds of silence before an iteration is considered stuck. Resets on every session event (tool call, reasoning delta, etc.). Default: 120. Set to 0 to disable.",
     "120"
+  )
+  .option(
+    "--trace-events",
+    "Print all Copilot SDK session events and watchdog activity to stderr for debugging."
+  )
+  .option(
+    "--system-prompt <file>",
+    "Prompt file from prompts/ to use as the system prompt. The user prompt remains injected normally."
   );
 
 program.parse(process.argv);
@@ -52,6 +60,8 @@ const raw = program.opts<{
   token?: string;
   iterationTimeout: string;
   inactivityTimeout: string;
+  traceEvents?: boolean;
+  systemPrompt?: string;
 }>();
 
 const parsedIterations = parseInt(raw.iterations, 10);
@@ -79,6 +89,8 @@ const options: EvalOptions = {
   iterations:           Math.max(1, parsedIterations),
   model:                raw.model,
   mcp:                  raw.mcp,
+  traceEvents:          raw.traceEvents,
+  systemPrompt:         raw.systemPrompt,
   token:                resolvedToken,
   iterationTimeoutMs:   parsedTimeout * 1000,
   inactivityTimeoutMs:  parsedInactivityTimeout * 1000,
@@ -93,6 +105,8 @@ function printBanner(opts: EvalOptions): void {
   console.log(`   Model      : ${opts.model}`);
   console.log(`   Iterations : ${opts.iterations}`);
   if (opts.mcp)   console.log(`   MCP config : ${opts.mcp}`);
+  if (opts.systemPrompt) console.log(`   System prompt : ${opts.systemPrompt}`);
+  if (opts.traceEvents) console.log(`   Trace events  : enabled (stderr)`);
   console.log(`   Auth       : ${opts.token ? "GitHub token (--token / GITHUB_TOKEN)" : "gh CLI credentials"}`);
   console.log(`   Iter. timeout    : ${(opts.iterationTimeoutMs ?? 1_200_000) / 1000}s`);
   const inactSecs = (opts.inactivityTimeoutMs ?? 120_000) / 1000;
@@ -101,11 +115,22 @@ function printBanner(opts: EvalOptions): void {
 }
 
 async function main(): Promise<void> {
+  let loadedSystemPrompt: string | undefined;
+
+  if (options.systemPrompt) {
+    try {
+      loadedSystemPrompt = await loadSystemPromptFromPromptsFolder(options.systemPrompt);
+    } catch (err) {
+      console.error(`\n[eval-copilot] Fatal error: ${(err as Error).message ?? String(err)}`);
+      process.exit(1);
+    }
+  }
+
   printBanner(options);
 
-  const clientAdapter     = new SdkCopilotClientAdapter(options.token);
+  const clientAdapter     = new SdkCopilotClientAdapter(options.token, options.traceEvents === true);
   const progressReporter  = new OraProgressReporter();
-  const promptTransformer = new AuditPromptTransformer();
+  const promptTransformer = new AuditPromptTransformer(loadedSystemPrompt, Boolean(options.mcp));
   const reportWriter      = new FileSystemReportWriter();
 
   let results: Awaited<ReturnType<typeof runEval>>;

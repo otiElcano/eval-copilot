@@ -27,6 +27,12 @@ check_copilot_auth() {
   fi
 }
 
+check_kali_mcp_api() {
+  local url="${KALI_MCP_SERVER_URL:-http://127.0.0.1:5000/health}"
+  echo "Checking Kali MCP API: $url"
+  curl -fsS "$url"
+}
+
 cat <<'BANNER'
 ╔══════════════════════════════════════════════════════════════════╗
 ║                        eval-copilot                              ║
@@ -40,6 +46,9 @@ cat <<'BANNER'
 ║                                                                  ║
 ║  Verifica autenticación:                                         ║
 ║    check_copilot_auth                                            ║
+║                                                                  ║
+║  Verifica API Kali MCP:                                          ║
+║    check_kali_mcp_api                                            ║
 ║                                                                  ║
 ║  Ejecuta la herramienta:                                         ║
 ║    eval-copilot -p "tu prompt" -x 3 \                            ║
@@ -64,7 +73,11 @@ echo ""
 if command -v python3 >/dev/null 2>&1; then
   if [[ -f "/opt/mcp/kali/requirements.txt" ]]; then
     echo "[eval-copilot] Installing MCP requirements from /opt/mcp/kali/requirements.txt"
-    pip install --no-cache-dir -r /opt/mcp/kali/requirements.txt || true
+    if ! pip install --no-cache-dir -r /opt/mcp/kali/requirements.txt; then
+      echo "[eval-copilot] WARNING: MCP dependency installation failed"
+      echo "[eval-copilot] The Kali MCP bridge may exit immediately with 'Connection closed'"
+      echo "[eval-copilot] Retry manually with: pip install --no-cache-dir -r /opt/mcp/kali/requirements.txt"
+    fi
   else
     echo "[eval-copilot] /opt/mcp/kali/requirements.txt not found, skipping pip install"
   fi

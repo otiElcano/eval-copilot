@@ -42,6 +42,10 @@ export interface EvalOptions {
   iterations: number;
   model: string;
   mcp?: string;
+  /** Print all session events and watchdog activity to stderr for debugging. */
+  traceEvents?: boolean;
+  /** Optional prompt file loaded from prompts/ and used as a system prompt. */
+  systemPrompt?: string;
   /** GitHub PAT for Copilot auth; bypasses gh CLI. Falls back to GITHUB_TOKEN env var. */
   token?: string;
   /** Max ms to wait per iteration (all tool/MCP calls included). Default: 1_200_000 (20 min). */
