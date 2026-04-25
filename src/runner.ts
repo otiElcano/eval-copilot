@@ -17,8 +17,19 @@ class InactivityTimeoutError extends Error {
   }
 }
 
+class IterationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Iteration timeout after ${timeoutMs}ms`);
+    this.name = "IterationTimeoutError";
+  }
+}
+
 function isInactivityTimeoutError(err: unknown): boolean {
   return err instanceof Error && err.name === "InactivityTimeoutError";
+}
+
+function isIterationTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.name === "IterationTimeoutError";
 }
 
 function truncate(text: string, max = 180): string {
@@ -155,6 +166,33 @@ function createInactivityWatchdog(
   return { promise, cancel };
 }
 
+function createIterationWatchdog(
+  iterationTimeoutMs: number,
+  tracePrefix?: string,
+): { promise: Promise<never>; cancel: () => void } {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  const trace = (message: string): void => {
+    if (!tracePrefix) return;
+    console.error(`[trace ${tracePrefix}] ${new Date().toISOString()} [watchdog] ${message}`);
+  };
+
+  const promise = new Promise<never>((_resolve, reject) => {
+    trace(`armed iteration timeout for ${iterationTimeoutMs}ms`);
+    timeoutHandle = setTimeout(() => {
+      trace(`iteration timeout after ${iterationTimeoutMs}ms`);
+      reject(new IterationTimeoutError(iterationTimeoutMs));
+    }, iterationTimeoutMs);
+  });
+
+  const cancel = (): void => {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    trace("cancelled");
+  };
+
+  return { promise, cancel };
+}
+
 interface IterationContext {
   clientAdapter:          ICopilotClientAdapter;
   progress:               IProgressReporter;
@@ -207,14 +245,21 @@ async function runIteration(ctx: IterationContext): Promise<AuditIterationResult
           ? createInactivityWatchdog(session, ctx.inactivityTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
           : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
 
+      const { promise: iterationTimeoutPromise, cancel: cancelIterationWatchdog } =
+        ctx.iterationTimeoutMs > 0
+          ? createIterationWatchdog(ctx.iterationTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
+          : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
+
       const sendPromise = session.sendAndWait({ prompt: promptToSend }, ctx.iterationTimeoutMs);
 
       try {
-        responseEvent = await Promise.race([sendPromise, inactivityPromise]);
+        responseEvent = await Promise.race([sendPromise, inactivityPromise, iterationTimeoutPromise]);
         cancelWatchdog();
+        cancelIterationWatchdog();
         break;
       } catch (err) {
         cancelWatchdog();
+        cancelIterationWatchdog();
 
         if (isInactivityTimeoutError(err) && !recoveredFromTimeout) {
           recoveredFromTimeout = true;
@@ -233,6 +278,11 @@ async function runIteration(ctx: IterationContext): Promise<AuditIterationResult
             console.error(`[trace ${index}/${total}] ${new Date().toISOString()} timeout recovered; continuing same iteration`);
           }
           continue;
+        }
+
+        if (isIterationTimeoutError(err)) {
+          await session.abort();
+          await sendPromise.catch(() => undefined);
         }
 
         throw err;

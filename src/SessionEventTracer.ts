@@ -49,11 +49,14 @@ function summarizeEventData(event: unknown): string {
         : typeof result?.content === "string"
           ? result.content
           : "";
+      const errorText = data["error"] !== undefined
+        ? truncate(stringifyUnknown(data["error"]), 120)
+        : "";
       return [
         `tool=${String(data["toolName"] ?? "unknown")}`,
         `id=${String(data["toolCallId"] ?? "")}`,
         `success=${String(data["success"] ?? "?")}`,
-        data["error"] ? `error=${JSON.stringify(truncate(String(data["error"]), 120))}` : "",
+        errorText ? `error=${JSON.stringify(errorText)}` : "",
         resultText ? `resultChars=${resultText.length}` : "",
       ].filter(Boolean).join(" ");
     }

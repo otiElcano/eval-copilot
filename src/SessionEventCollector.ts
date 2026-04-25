@@ -64,9 +64,9 @@ export class SessionEventCollector {
           data?: {
             toolCallId?: string;
             success?: boolean;
-            error?: string;
-            errorMessage?: string;
-            reason?: string;
+            error?: unknown;
+            errorMessage?: unknown;
+            reason?: unknown;
             result?: { content?: string; detailedContent?: string };
           };
         };

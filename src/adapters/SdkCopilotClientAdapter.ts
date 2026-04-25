@@ -18,15 +18,33 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
 
   constructor(token?: string, traceEvents = false) {
     const opts = token ? { githubToken: token } : {};
-    this.client = new CopilotClient(opts);
+    this.client = new CopilotClient({
+      ...opts,
+      env: {
+        ...process.env,
+        NODE_NO_WARNINGS: "1",
+      },
+    });
     this.traceEvents = traceEvents;
+  }
+
+  private getNegotiatedProtocolVersion(): number | undefined {
+    type ClientWithProtocolVersion = {
+      negotiatedProtocolVersion?: number;
+    };
+
+    return (this.client as unknown as ClientWithProtocolVersion).negotiatedProtocolVersion;
+  }
+
+  private buildPermissionDecision(request: PermissionRequest): PermissionRequestResult {
+    return { kind: "approved" };
   }
 
   private async handlePermissionRequest(
     request: PermissionRequest,
     invocation: { sessionId: string },
   ): Promise<PermissionRequestResult> {
-    const decision: PermissionRequestResult = { kind: "approved" };
+    const decision = this.buildPermissionDecision(request);
 
     if (this.traceEvents) {
       const command = typeof request["fullCommandText"] === "string" ? request["fullCommandText"] : undefined;
@@ -34,7 +52,7 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
       console.error(
         `[trace permission] ${new Date().toISOString()} ` +
         `kind=${request.kind} tool=${toolName ?? ""} toolCallId=${request.toolCallId ?? ""} ` +
-        `session=${invocation.sessionId} decision=${decision.kind}` +
+        `session=${invocation.sessionId} protocol=${this.getNegotiatedProtocolVersion() ?? "unknown"} decision=${decision.kind}` +
         `${command ? ` command=${JSON.stringify(command)}` : ""}`
       );
     }
@@ -61,6 +79,23 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
     return raw as unknown as ModelInfo[];
   }
 
+  private async enableApproveAll(session: unknown): Promise<void> {
+    type SessionWithPermissionsRpc = {
+      rpc?: {
+        permissions?: {
+          setApproveAll?: (params: { enabled: boolean }) => Promise<unknown>;
+        };
+      };
+    };
+
+    const rpcSession = session as SessionWithPermissionsRpc;
+    const setApproveAll = rpcSession.rpc?.permissions?.setApproveAll;
+
+    if (!setApproveAll) return;
+
+    await setApproveAll({ enabled: true });
+  }
+
   async createSession(config: CreateSessionOptions): Promise<ISession> {
     const session = await this.client.createSession({
       ...config,
@@ -68,6 +103,8 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
       onPermissionRequest: (request, invocation) => this.handlePermissionRequest(request, invocation),
       workingDirectory:    process.cwd(),
     });
+
+    await this.enableApproveAll(session);
 
     // The SDK session uses a string-overloaded `on()` that TypeScript cannot
     // resolve in generic contexts. We normalise it here to the ISession shape.
