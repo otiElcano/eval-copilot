@@ -1,0 +1,21 @@
+# Build artefacts
+dist/
+node_modules/
+
+# Docker orchestration files (not needed inside image)
+docker/Dockerfile
+docker/docker-compose.yml
+
+# Reports generated at runtime
+reports/
+eval_report_*.html
+
+# Dev / IDE
+.vscode/
+.git/
+*.log
+
+# Secrets / credentials
+.env
+.env.*
+Code/

@@ -5,15 +5,16 @@ node_modules/
 dist/
 
 # Generated reports
-eval_report_*.html
+reports/
 
 # Environment files
 .env
 .env.local
 .env.*.local
 
-# MCP config (may contain tokens)
+# MCP config (may contain tokens) — committed copies live in docker/ and kali_docker/
 mcp-config.json
+!docker/mcp-config.json
 
 # VS Code extension tracker data
 Code/
