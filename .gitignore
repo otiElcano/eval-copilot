@@ -5,7 +5,7 @@ node_modules/
 dist/
 
 # Generated reports
-reports/
+reports_old/
 
 # Environment files
 .env
