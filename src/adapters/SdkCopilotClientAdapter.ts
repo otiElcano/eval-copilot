@@ -36,8 +36,13 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
     return (this.client as unknown as ClientWithProtocolVersion).negotiatedProtocolVersion;
   }
 
-  private buildPermissionDecision(request: PermissionRequest): PermissionRequestResult {
-    return { kind: "approved" };
+  private buildPermissionDecision(_request: PermissionRequest): PermissionRequestResult {
+    // The copilot CLI (≥1.0.21) expects "approve-once" (or "approve-for-session").
+    // "approved" was the old kind used with CLI <1.0.21 and triggers
+    // "unexpected user permission response" in newer CLI versions.
+    // The SDK type definition still lists only "approved"; cast via unknown to
+    // send the wire value the current CLI actually accepts.
+    return { kind: "approve-once" } as unknown as PermissionRequestResult;
   }
 
   private async handlePermissionRequest(
@@ -97,10 +102,15 @@ export class SdkCopilotClientAdapter implements ICopilotClientAdapter {
   }
 
   async createSession(config: CreateSessionOptions): Promise<ISession> {
+    // Always route through our handler so we return { kind: "approve-once" }.
+    // SDK's built-in approveAll returns { kind: "approved" } which is rejected
+    // by copilot CLI ≥1.0.21 with "unexpected user permission response".
+    const permissionHandler = (request: PermissionRequest, invocation: { sessionId: string }) =>
+      this.handlePermissionRequest(request, invocation);
+
     const session = await this.client.createSession({
       ...config,
-      // SDK-specific concerns confined to the adapter (DIP)
-      onPermissionRequest: (request, invocation) => this.handlePermissionRequest(request, invocation),
+      onPermissionRequest: permissionHandler,
       workingDirectory:    process.cwd(),
     });
 
