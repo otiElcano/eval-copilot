@@ -120,10 +120,14 @@ function buildSystemMessage(iteration: number, total: number, seed: string, pref
  * Returns a promise that rejects after `inactivityTimeoutMs` of silence and
  * a `cancel()` to clean up when the iteration finishes normally.
  *
- * The countdown resets on every SDK session event, so the watchdog only fires
- * when the session is genuinely stuck — no tool calls, no turn boundaries,
- * no final messages, no session lifecycle events, nothing — for the
- * configured interval.
+ * The countdown resets on session events that mark real progress:
+ * - Any event when no tool is currently executing.
+ * - A `tool.execution_complete` event (the tool finished — model can proceed).
+ *
+ * Events that arrive while a tool is in-flight (e.g. `assistant.reasoning_delta`
+ * from a reasoning model thinking while waiting for a slow tool) do NOT reset
+ * the timer.  This prevents a stuck MCP tool from keeping the session alive
+ * indefinitely via background reasoning tokens.
  */
 function createInactivityWatchdog(
   session: ISession,
@@ -133,6 +137,7 @@ function createInactivityWatchdog(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let rejectFn!: (err: Error) => void;
   const unsubscribers: Array<() => void> = [];
+  let inFlightTools = 0;
 
   const trace = (message: string): void => {
     if (!tracePrefix) return;
@@ -152,7 +157,29 @@ function createInactivityWatchdog(
     rejectFn = reject;
     unsubscribers.push(session.on((event: unknown) => {
       const eventType = (event as { type?: string } | undefined)?.type ?? "unknown";
-      reset(eventType);
+
+      if (eventType === "tool.execution_start") {
+        // A new tool started — reset the countdown so each tool call gets
+        // a fresh inactivityTimeoutMs window from the moment it begins.
+        inFlightTools++;
+        trace(`tool started, in-flight: ${inFlightTools}`);
+        reset(eventType);
+      } else if (eventType === "tool.execution_complete") {
+        if (inFlightTools > 0) inFlightTools--;
+        trace(`tool completed, in-flight: ${inFlightTools}`);
+        if (inFlightTools === 0) {
+          // Last in-flight tool finished — the model can now act on results.
+          // Only reset the timer once the whole batch is done, so that
+          // individual completions within a parallel batch don't extend the
+          // window for tools that are still running.
+          reset(eventType);
+        }
+      } else if (inFlightTools === 0) {
+        // No tool is executing — any session event counts as activity.
+        reset(eventType);
+      }
+      // else: a tool is in-flight; intermediate events (reasoning deltas,
+      // keepalives, etc.) do NOT reset the timer.
     }));
     reset("initial arm");
   });
@@ -226,6 +253,13 @@ async function runIteration(ctx: IterationContext): Promise<AuditIterationResult
     session = await clientAdapter.createSession({
       model: ctx.resolvedModel,
       systemMessage: { mode: "append", content: buildSystemMessage(index, total, seed, ctx.mcpServers !== undefined) },
+      // Disable infinite sessions (default: enabled in SDK ≥0.2.2). Our usage pattern
+      // creates a fresh session per iteration and destroys it immediately after, which
+      // is incompatible with the persistent-state machinery that infinite sessions
+      // enable. Leaving it on causes the CLI to attempt background checkpoint writes
+      // through a permission path that may bypass onPermissionRequest in the new
+      // event-based protocol, producing "unexpected user permission response" errors.
+      infiniteSessions: { enabled: false },
       ...(ctx.mcpServers        ? { mcpServers: ctx.mcpServers }                                                          : {}),
       ...(ctx.supportsReasoning ? { reasoningEffort: ctx.defaultReasoningEffort as "low" | "medium" | "high" | "xhigh" } : {}),
     });
@@ -235,58 +269,38 @@ async function runIteration(ctx: IterationContext): Promise<AuditIterationResult
     collector.attach();
     tracer?.attach();
 
-    let promptToSend = wrappedPrompt;
-    let recoveredFromTimeout = false;
     let responseEvent: unknown;
 
-    while (true) {
-      const { promise: inactivityPromise, cancel: cancelWatchdog } =
-        ctx.inactivityTimeoutMs > 0
-          ? createInactivityWatchdog(session, ctx.inactivityTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
-          : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
+    // Iteration watchdog: hard ceiling from iteration start.
+    const { promise: iterationTimeoutPromise, cancel: cancelIterationWatchdog } =
+      ctx.iterationTimeoutMs > 0
+        ? createIterationWatchdog(ctx.iterationTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
+        : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
 
-      const { promise: iterationTimeoutPromise, cancel: cancelIterationWatchdog } =
-        ctx.iterationTimeoutMs > 0
-          ? createIterationWatchdog(ctx.iterationTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
-          : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
+    // Generous SDK-level deadline so our watchdogs always fire first.
+    const sendAndWaitTimeout = ctx.iterationTimeoutMs > 0
+      ? ctx.iterationTimeoutMs + 120_000
+      : 24 * 60 * 60 * 1000; // 24 h when iteration timeout is disabled
 
-      const sendPromise = session.sendAndWait({ prompt: promptToSend }, ctx.iterationTimeoutMs);
+    const { promise: inactivityPromise, cancel: cancelWatchdog } =
+      ctx.inactivityTimeoutMs > 0
+        ? createInactivityWatchdog(session, ctx.inactivityTimeoutMs, ctx.traceEvents ? `${index}/${total}` : undefined)
+        : { promise: new Promise<never>(() => { /* disabled */ }), cancel: () => { /* noop */ } };
 
-      try {
-        responseEvent = await Promise.race([sendPromise, inactivityPromise, iterationTimeoutPromise]);
-        cancelWatchdog();
-        cancelIterationWatchdog();
-        break;
-      } catch (err) {
-        cancelWatchdog();
-        cancelIterationWatchdog();
+    const sendPromise = session.sendAndWait({ prompt: wrappedPrompt }, sendAndWaitTimeout);
 
-        if (isInactivityTimeoutError(err) && !recoveredFromTimeout) {
-          recoveredFromTimeout = true;
-          await session.abort();
-          await sendPromise.catch(() => undefined);
-
-          const pendingTools = collector.markPendingToolsAsTimedOut((err as Error).message);
-          const collected = collector.getResults();
-          promptToSend = buildContinuationPrompt(
-            wrappedPrompt,
-            (err as Error).message,
-            pendingTools,
-            collected.thinking,
-          );
-          if (ctx.traceEvents) {
-            console.error(`[trace ${index}/${total}] ${new Date().toISOString()} timeout recovered; continuing same iteration`);
-          }
-          continue;
-        }
-
-        if (isIterationTimeoutError(err)) {
-          await session.abort();
-          await sendPromise.catch(() => undefined);
-        }
-
-        throw err;
-      }
+    try {
+      responseEvent = await Promise.race([sendPromise, inactivityPromise, iterationTimeoutPromise]);
+    } catch (err) {
+      // Any timeout (inactivity or iteration) terminates this iteration.
+      // Abort the session non-blocking and suppress the orphaned sendPromise
+      // to avoid unhandled-rejection warnings.
+      session.abort().catch(() => undefined);
+      sendPromise.catch(() => undefined);
+      throw err;
+    } finally {
+      cancelWatchdog();
+      cancelIterationWatchdog();
     }
 
     type ResponseEvent = { data?: { content?: string; reasoningText?: string; reasoningOpaque?: string } };
