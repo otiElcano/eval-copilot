@@ -1,0 +1,18 @@
+# Archivos y directorios de Docker
+.dockerignore
+
+# Volúmenes de base de datos
+data/
+*.sql.backup
+
+# Logs
+*.log
+
+# Archivos temporales
+*.tmp
+*.swp
+*~
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
