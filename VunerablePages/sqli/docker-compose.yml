@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: sqli_web
+    ports:
+      - "8083:80"
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASS=rootpass
+      - DB_NAME=sqli_demo
+    restart: unless-stopped
+
+  db:
+    image: mariadb:10.11
+    container_name: sqli_db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: sqli_demo
+      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
+    volumes:
+      - ./setup_database.sql:/docker-entrypoint-initdb.d/setup_database.sql
+      - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:

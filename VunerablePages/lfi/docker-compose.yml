@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  lfi-vulnerable-web:
+    build: .
+    container_name: lfi-gallery
+    ports:
+      - "8081:80"
+    volumes:
+      - ./www:/var/www/html
+    restart: unless-stopped
+    environment:
+      - APACHE_RUN_USER=www-data
+      - APACHE_RUN_GROUP=www-data

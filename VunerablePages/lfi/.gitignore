@@ -1,0 +1,8 @@
+# www/
+*.log
+.DS_Store
+.htaccess
+.htpasswd
+
+# Docker
+.dockerignore
